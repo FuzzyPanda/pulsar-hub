@@ -1,7 +1,12 @@
+from allauth.account.decorators import secure_admin_login
 from django.contrib import admin
 from django.urls import include, path
 
 from hub import health
+
+# The admin has its own login form, which would skip the hub's rate limits, MFA and audit trail.
+# Send it through the one sign-in everyone else uses.
+admin.site.login = secure_admin_login(admin.site.login)
 
 urlpatterns = [
     path("healthz", health.healthz, name="healthz"),

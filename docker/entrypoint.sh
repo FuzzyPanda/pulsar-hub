@@ -53,6 +53,8 @@ case "$role" in
         # The shared database cache (rate limits, login throttles) needs its table; idempotent.
         log "ensuring cache table..."
         python manage.py createcachetable
+        log "ensuring housekeeping schedules..."
+        python manage.py setup_schedules
         # The root filesystem is read-only: worker heartbeat files go to the /tmp tmpfs, and the
         # control socket (which gunicorn would put in the home directory) is off.
         log "starting gunicorn..."

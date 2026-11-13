@@ -342,6 +342,15 @@ def test_admin_and_operator_console_need_mfa(client, operator):
     assert client.get("/operator/").status_code == 200
 
 
+def test_the_admin_has_no_login_form_of_its_own(client, operator):
+    """Django's admin login would skip rate limits, MFA and the audit trail."""
+    User.objects.filter(pk=operator.pk).update(is_staff=True, is_superuser=True)
+    assert client.get("/admin/login/")["Location"].startswith("/accounts/login/")
+    response = client.post("/admin/login/", {"username": operator.email, "password": f.PASSWORD})
+    assert response.status_code == 302 and response["Location"].startswith("/accounts/login/")
+    assert "_auth_user_id" not in client.session
+
+
 def test_admin_registers_no_business_model():
     from django.contrib import admin
 
