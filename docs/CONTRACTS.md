@@ -187,6 +187,12 @@ raw request body keyed with the credential.
 Any other `data` key is refused. That is how rule 2 is enforced: there is no key a card number, a
 PIN or a credential hash could travel in.
 
+What the gateway sends today (Pulsar Access Control, `internal/hublink`): `attendance.clock_in`,
+`attendance.clock_out`, `door.forced` and `door.held_open`. It does not yet send `seconds` on
+`door.held_open`, nor `access.applied`, `access.revoked` or `gateway.health`; the hub accepts them
+when it does. Applied versions reach the hub through the acknowledgement, and health through the
+state call below.
+
 ### State
 
 `POST /sites/{site_ref}/state` replaces the last snapshot. `204`.
@@ -197,6 +203,9 @@ PIN or a credential hash could travel in.
 ```
 
 `state` is one of `locked`, `unlocked`, `open`, `held_open`, `forced`, `fault`, `lockdown`, `unknown`.
+`mode` is the door's operating mode as the gateway holds it. `health.status` is `ok` or `degraded`
+(`degraded` when the last hub call failed or events are waiting). The gateway sends every door it
+has, and `software_version` at pairing may be empty.
 
 ## Pulsar Rostering and hub (built: hub side H2; Rostering side in `pulsar-rostering`)
 
