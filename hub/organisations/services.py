@@ -650,6 +650,40 @@ def update_security_settings(*, actor: Actor, staff_mfa_required: bool, sso_requ
 
 
 @transaction.atomic
+def set_directory_source(*, actor: Actor, source: str, request=None) -> None:
+    """Choose which product owns this organisation's people and sites (decision D3).
+
+    Handing them to Pulsar Rostering is only possible while the hub holds none of its own:
+    Rostering's records arrive with their own ids, and two copies of the same person would be worse
+    than either product owning them. Taking them back is always possible; the hub keeps the copy
+    it has and stops accepting Rostering's.
+    """
+    from hub.directory.models import Person, Site
+
+    if not actor.is_member_with(Role.OWNER):
+        raise PermissionDenied("Only an Owner can change where people and sites come from.")
+    organisation = require_organisation()
+    source = Organisation.DirectorySource(source)
+    if source == organisation.directory_source:
+        return
+    if source == Organisation.DirectorySource.ROSTERING and (Person.objects.exists() or Site.objects.exists()):
+        raise ValidationError(
+            "This organisation already has people or sites in the hub. Pulsar Rostering can only take over "
+            "an empty directory."
+        )
+    old = organisation.directory_source
+    organisation.directory_source = source
+    organisation.save(update_fields=["directory_source", "updated_at"])
+    _audit(
+        actor,
+        "organisation.directory_source_changed",
+        request=request,
+        target=organisation,
+        data={"from": old, "to": str(source)},
+    )
+
+
+@transaction.atomic
 def rename_organisation(*, actor: Actor, name: str, request=None) -> None:
     actor.require_member(Role.ADMIN)
     organisation = require_organisation()

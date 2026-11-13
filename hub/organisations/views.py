@@ -234,10 +234,17 @@ def org_settings(request, org_slug: str):
         else:
             messages.success(request, "Saved.")
         return redirect("org_settings", org_slug=org_slug)
+    from hub.api.models import Scope, ServiceToken
+
     context = {
         "identity_providers": IdentityProvider.objects.all(),
         "provider_choices": IdentityProvider.Provider.choices,
         "is_owner": actor.membership is not None and actor.membership.has_role(Role.OWNER),
+        "directory_source_choices": Organisation.DirectorySource.choices,
+        "service_tokens": ServiceToken.objects.live(),
+        "scope_choices": Scope.choices,
+        # The token itself, once, straight after it was made.
+        "new_service_token": request.session.pop(NEW_SERVICE_TOKEN_KEY, None),
     }
     return render(request, "organisations/settings.html", context)
 
@@ -289,6 +296,62 @@ def identity_provider_remove(request, org_slug: str, idp_id):
         _flash_errors(request, exc)
     else:
         messages.success(request, "Identity provider removed.")
+    return redirect("org_settings", org_slug=org_slug)
+
+
+@require_POST
+@role_required(Role.OWNER)
+@step_up_required
+def directory_source(request, org_slug: str):
+    try:
+        services.set_directory_source(
+            actor=Actor.from_request(request), source=request.POST.get("source", ""), request=request
+        )
+    except (ValidationError, PermissionDenied, ValueError) as exc:
+        _flash_errors(request, exc)
+    else:
+        messages.success(request, "Saved.")
+    return redirect("org_settings", org_slug=org_slug)
+
+
+NEW_SERVICE_TOKEN_KEY = "hub_new_service_token"  # noqa: S105 (a session key name, not a secret)
+
+
+@require_POST
+@role_required(Role.OWNER)
+@step_up_required
+def service_token_create(request, org_slug: str):
+    from hub.api import services as api_services
+
+    try:
+        row, token = api_services.create_service_token(
+            actor=Actor.from_request(request),
+            name=request.POST.get("name", ""),
+            scopes=request.POST.getlist("scopes"),
+            request=request,
+        )
+    except (ValidationError, PermissionDenied) as exc:
+        _flash_errors(request, exc)
+    else:
+        # Shown once, on the next page, then gone: only its digest is stored.
+        request.session[NEW_SERVICE_TOKEN_KEY] = {"id": str(row.pk), "name": row.name, "token": token}
+    return redirect("org_settings", org_slug=org_slug)
+
+
+@require_POST
+@role_required(Role.OWNER)
+@step_up_required
+def service_token_revoke(request, org_slug: str, token_id):
+    from hub.api import services as api_services
+    from hub.api.models import ServiceToken
+
+    row = get_object_or_404(ServiceToken.objects, pk=token_id)
+    try:
+        api_services.revoke_service_token(row, actor=Actor.from_request(request), request=request)
+    except (ValidationError, PermissionDenied) as exc:
+        _flash_errors(request, exc)
+    else:
+        messages.success(request, "Token revoked.")
     return redirect("org_settings", org_slug=org_slug)
 
 

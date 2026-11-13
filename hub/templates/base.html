@@ -45,6 +45,10 @@
           <nav class="org-nav" aria-label="Organisation">
             <a href="{% url 'org_home' org_slug=organisation.slug %}"{% if current == 'org_home' %} aria-current="page"{% endif %}>Overview</a>
             {% if request.operator_access or membership.role == "owner" or membership.role == "admin" or membership.role == "manager" %}
+              <a href="{% url 'site_list' org_slug=organisation.slug %}"{% if current == 'site_list' or current == 'site_detail' %} aria-current="page"{% endif %}>Sites</a>
+              <a href="{% url 'person_list' org_slug=organisation.slug %}"{% if current == 'person_list' or current == 'person_detail' %} aria-current="page"{% endif %}>People</a>
+              <a href="{% url 'group_list' org_slug=organisation.slug %}"{% if current == 'group_list' or current == 'group_detail' %} aria-current="page"{% endif %}>Access groups</a>
+              <a href="{% url 'event_list' org_slug=organisation.slug %}"{% if current == 'event_list' %} aria-current="page"{% endif %}>Events</a>
               <a href="{% url 'member_list' org_slug=organisation.slug %}"{% if current == 'member_list' %} aria-current="page"{% endif %}>Members</a>
             {% endif %}
             {% if request.operator_access or membership.role == "owner" or membership.role == "admin" %}

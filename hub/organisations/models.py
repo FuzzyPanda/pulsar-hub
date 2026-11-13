@@ -34,6 +34,15 @@ class Organisation(models.Model):
     # account disabled in the client's directory can no longer get in.
     sso_required = models.BooleanField(default=False)
 
+    # Decision D3: one product owns people and sites for an organisation, never both. An
+    # organisation that rosters keeps them in Pulsar Rostering, which sends the hub a copy; the hub
+    # then refuses edits of its own. Access groups are always the hub's.
+    class DirectorySource(models.TextChoices):
+        HUB = "hub", "Pulsar Hub"
+        ROSTERING = "rostering", "Pulsar Rostering"
+
+    directory_source = models.CharField(max_length=16, choices=DirectorySource.choices, default=DirectorySource.HUB)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

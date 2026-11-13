@@ -1,7 +1,8 @@
 # Pulsar Hub
 
-**Status: phases H0 and H1 are built** (a running, tested service with organisations, sign-in, MFA
-and sign-in for other products). H2 onward is planned, not started. Working name; the product name
+**Status: phases H0 to H3 are built**, with the event and door-state intake of H4: organisations,
+sign-in and MFA, people and sites, access groups, gateway pairing and access sync, and the links to
+Pulsar Access Control and Pulsar Rostering. Remote door actions (H6) are not built. Working name; the product name
 is an open decision.
 
 Pulsar Hub is the hosted service that joins a client's Pulsar products around one record, the staff
@@ -12,7 +13,7 @@ anywhere, across every site. It needs no server of its own.
 |---|---|---|
 | **Pulsar Hub** (this repo) | Hosted by Pulsar, one organisation per client | Identity, organisations, people, sites, gateways, access |
 | **Pulsar Access Control** | A gateway on each client site | Pairs with the hub and dials out to it; keeps deciding locally |
-| **Time Is Money 2** (rostering) | Hosted, or standalone for existing installs | Signs in through the hub; reads people and sites; receives door events |
+| **Pulsar Rostering** (`pulsar-rostering`, formerly Time Is Money 2) | Hosted | Sends the hub its people and sites with a service token; reads door attendance events back. Has its own logins today (decision D8) |
 | **Pulsar app** (`pulsar-app`) | Staff and managers' phones | One app over all of the above |
 | Managed IT | Pulsar service | Joins through single sign-on with the client's Microsoft or Google identity |
 

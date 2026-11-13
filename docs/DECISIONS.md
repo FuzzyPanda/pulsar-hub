@@ -8,20 +8,22 @@ Open decisions first. Move an entry to "Made" with its date when it is settled.
 |---|---|---|---|
 | D1 | Product name for the hub, the app and the rostering product | Choose before any domain, sender address or app bundle id is created; those are permanent or costly to change | Hosting, app store submission |
 | D2 | Hosting | Australian region; AWS Melbourne, where the image registry already lives | H7; staging can start anywhere |
-| D3 | Who owns people and sites when an organisation uses both rostering and the hub | TIM2 is the source for organisations that roster; the hub is the source for access-only organisations. Never two-way | H2 |
-| D4 | TIM2 multi-tenancy | Its product plan (decision D1 there) recommends one shared database with an organisation on every row. Align with it: TIM2 adopts the hub's `org_ref` and sign-in instead of building its own sign-up and identity | TIM2 Phase 2 |
+| D8 | Two sign-in systems. Pulsar Rostering was rebuilt as a platform with its own organisations, memberships, logins and mandatory two-step sign-in, and calls itself a hub; this hub has the same things plus single sign-on, passkeys and the OIDC provider. Today they are linked by a service token only, so a person who uses both signs in twice and an organisation exists in both | Choose one identity: either Rostering signs in through this hub (OIDC; this hub owns organisations and logins), or this hub's access and gateway features move into the Rostering platform and this repo is retired. Do not run two for long | Before a real client uses both; the app's sign-in |
 | D5 | One card working at every site | Start with the hub-issued QR credential. A shared per-organisation card key means the hub holds credential hashes and one key covers every site; decide later, deliberately | Beyond H5 |
 | D6 | Is MFA mandatory for Staff | Per-organisation setting, default off for Staff, always on for Manager and above. **H1 was built this way (2026-11-13); confirm to close** | H1 |
-| D7 | PAC positioning | PAC's current pitch is "MSP-operated, not customer cloud". The hub makes it "runs on site, managed from anywhere". Needs an overseer decision in the PAC repo | H3 onward |
+| D7 | PAC positioning | PAC's fleet rules still say "MSP-operated, not customer cloud". The owner directed the hub link to be built (2026-11-13) and it is recorded in PAC's backlog, but the wording of PAC's pitch and its fleet-control-plane skill has not been changed and needs the owner's words | Before remote door actions (H6) |
 
 ## Made
 
 | Date | Decision |
 |---|---|
-| 2026-11-13 | The hub and the app are separate repos from TIM2 and PAC. |
+| 2026-11-13 | The hub and the app are separate repos from rostering and PAC. |
 | 2026-11-13 | Pulsar's internal tools (MSP Dashboard, pulsar-knowledge, Pulsar Ops Core) are not part of the client offering. |
 | 2026-11-13 | Clients need remote management of access control, and multi-site access at least kept in sync. |
-| 2026-11-13 | **PerfectGym sites get rostering only.** PerfectGym handles access there. TIM2 integrates with PerfectGym; Pulsar Access Control and the hub's door features (H3 to H6) are not offered at those sites. |
+| 2026-11-13 | **PerfectGym sites get rostering only.** PerfectGym handles access there. Pulsar Rostering integrates with PerfectGym; Pulsar Access Control and the hub's door features (H3 to H6) are not offered at those sites. |
+
+| 2026-11-13 | **D3: one product owns people and sites per organisation.** Pulsar Rostering where the organisation rosters, the hub otherwise; set per organisation in the hub (`directory_source`), never both. Built as recommended when the owner directed the links to be built. Rostering sends; the hub never calls Rostering. |
+| 2026-11-13 | Time Is Money 2 is retired. Rostering is `pulsar-rostering`. |
 
 ## Assumed by this draft, not yet confirmed
 
@@ -37,7 +39,7 @@ None of these was in the plan in so many words. Each is cheap to change now and 
 
 | Choice | Why | Change it by |
 |---|---|---|
-| An OIDC token is for one user in **one** organisation; a person with two employers holds two tokens | The plan says claims carry "the organisation and the role"; one token for every organisation would make every API call name its organisation | Reworking `CONTRACTS.md` "Sign-in" before the app or TIM2 integrates |
+| An OIDC token is for one user in **one** organisation; a person with two employers holds two tokens | The plan says claims carry "the organisation and the role"; one token for every organisation would make every API call name its organisation | Reworking `CONTRACTS.md` "Sign-in" before the app integrates |
 | There is no public sign-up. A login is created only by accepting an invitation | A hub of staff records should not hold accounts nobody vouched for | `AccountAdapter.is_open_for_signup` |
 | Single sign-on uses **Pulsar's** Microsoft and Google registrations; an organisation only names its tenant or domain. No just-in-time provisioning | No per-organisation client secret in the database, and a directory cannot add people on its own | Adding per-organisation OIDC clients, with encrypted secrets |
 | A Pulsar operator's visit is **read-only**: it sees what an Admin sees and changes nothing. An operator login cannot hold a membership. The one thing an operator does for an organisation is send the first Owner invitation, and only while there is no Owner | An independent review showed that an operator who could invite could invite itself, turning a time-limited visit into permanent access | `Actor.is_member_with` and `invite_first_owner` in `hub/organisations/services.py` |

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ person.name }}{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ person.name }} <span class="badge{% if person.status == 'active' %} badge-ok{% endif %}">{{ person.get_status_display }}</span></h1>
+    <a class="btn btn-link" href="{% url 'person_list' org_slug=organisation.slug %}">All people</a>
+  </div>
+  <p class="muted">{% if person.work_email %}{{ person.work_email }}{% else %}No work email.{% endif %}{% if person.ended_at %} Ended {{ person.ended_at|date:"j M Y, H:i" }} UTC.{% endif %}</p>
+
+  <section class="card" aria-labelledby="where-heading">
+    <h2 id="where-heading">Where this person can enter</h2>
+    {% if site_rows %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Site</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for row in site_rows %}
+              <tr>
+                <td><a href="{% url 'site_detail' org_slug=organisation.slug site_id=row.site.id %}">{{ row.site.name }}</a></td>
+                <td>
+                  {% if row.sync.state == "in_sync" %}<span class="badge badge-ok">Confirmed</span>
+                  {% elif row.sync.state == "unconfirmed" %}<span class="badge badge-warn">Waiting for the gateway</span>
+                  {% elif row.sync.state == "out_of_contact" %}<span class="badge badge-bad">Gateway out of contact</span>
+                  {% elif row.sync.state == "failures" %}<span class="badge badge-warn">Applied with problems</span>
+                  {% elif row.sync.state == "unpaired" %}<span class="badge badge-warn">No gateway</span>
+                  {% else %}<span class="badge">Doors managed elsewhere</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty">This person is not in any access group that opens a site.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="groups-heading">
+    <h2 id="groups-heading">Access groups</h2>
+    {% if groups %}
+      <ul class="list">
+        {% for group in groups %}
+          <li>
+            <a href="{% url 'group_detail' org_slug=organisation.slug group_id=group.id %}">{{ group.name }}</a>
+            <form method="post" action="{% url 'group_member_remove' org_slug=organisation.slug group_id=group.id %}">
+              {% csrf_token %}
+              <input type="hidden" name="person" value="{{ person.id }}">
+              <input type="hidden" name="return" value="person">
+              <button class="btn btn-secondary btn-sm" type="submit">Remove from {{ group.name }}</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">This person is not in any access group.</p>
+    {% endif %}
+    {% if other_groups and person.status == "active" %}
+      <h3>Add to a group</h3>
+      <ul class="list">
+        {% for group in other_groups %}
+          <li>
+            <span>{{ group.name }}</span>
+            <form method="post" action="{% url 'group_member_add' org_slug=organisation.slug group_id=group.id %}">
+              {% csrf_token %}
+              <input type="hidden" name="person" value="{{ person.id }}">
+              <input type="hidden" name="return" value="person">
+              <button class="btn btn-secondary btn-sm" type="submit">Add to {{ group.name }}</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="events-heading">
+    <h2 id="events-heading">Recent events</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>What</th><th>Site</th><th>Door</th></tr></thead>
+        <tbody>
+          {% for event in recent_events %}
+            <tr>
+              <td class="nowrap">{{ event.occurred_at|date:"j M Y, H:i" }} UTC</td>
+              <td>{% include "gateways/_event_label.html" %}</td>
+              <td><a href="{% url 'site_detail' org_slug=organisation.slug site_id=event.site.id %}">{{ event.site.name }}</a></td>
+              <td>{% if event.data.door %}{{ event.data.door }}{% else %}<span class="muted">None</span>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="empty">No events yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if hub_owned %}
+    <section class="card" aria-labelledby="edit-heading">
+      <h2 id="edit-heading">Details</h2>
+      <form method="post" action="{% url 'person_update' org_slug=organisation.slug person_id=person.id %}">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="person-name">Name</label><input id="person-name" type="text" name="name" value="{{ person.name }}" maxlength="200" required></div>
+          <div class="field"><label for="person-email">Work email</label><input id="person-email" type="email" name="work_email" value="{{ person.work_email }}" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Save details</button></div>
+      </form>
+    </section>
+    {% if person.status == "active" %}
+      <section class="card card--danger" aria-labelledby="end-heading">
+        <h2 id="end-heading">End this person</h2>
+        <p>Their access is removed at every site on each gateway's next sync.</p>
+        <form method="post" action="{% url 'person_end' org_slug=organisation.slug person_id=person.id %}">
+          {% csrf_token %}
+          <button class="btn btn-danger" type="submit">End this person</button>
+        </form>
+      </section>
+    {% elif person.status == "ended" %}
+      <section class="card" aria-labelledby="reactivate-heading">
+        <h2 id="reactivate-heading">Make active again</h2>
+        <p class="muted">Their access returns at each site in their access groups on its next sync.</p>
+        <form method="post" action="{% url 'person_reactivate' org_slug=organisation.slug person_id=person.id %}">
+          {% csrf_token %}
+          <button class="btn btn-secondary" type="submit">Make active again</button>
+        </form>
+      </section>
+    {% endif %}
+  {% endif %}
+{% endblock %}

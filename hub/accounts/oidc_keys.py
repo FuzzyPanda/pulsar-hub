@@ -11,3 +11,11 @@ def generate_rsa_private_key_pem() -> str:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
+
+
+if __name__ == "__main__":
+    # `python -m hub.accounts.oidc_keys` works before any setting exists, which matters because the
+    # settings refuse to load without this very key.
+    import sys
+
+    sys.stdout.write(generate_rsa_private_key_pem())

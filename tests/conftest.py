@@ -4,7 +4,7 @@ import pytest
 from django.core.cache import cache
 
 from hub.organisations.context import current_organisation
-from hub.organisations.models import Organisation, Role
+from hub.organisations.models import Organisation, Role, hash_token
 from tests import factories as f
 
 
@@ -31,6 +31,15 @@ class World:
     invitation: object = None
     identity_provider: object = None
     operator_access: object = None
+    site: object = None
+    person: object = None
+    access_group: object = None
+    pairing_code: object = None
+    gateway: object = None
+    gateway_credential: str = ""
+    event: object = None
+    service_token: object = None
+    service_token_value: str = ""
 
     def user(self, role: str):
         return getattr(self, role)
@@ -54,6 +63,39 @@ def make_world(letter: str) -> World:
         organisation=organisation,
         operator=f.UserFactory(email=f"operator.{marker.lower()}@pulsar.test", is_platform_operator=True),
         reason=f"{marker} support visit",
+    )
+    # H2 and H3: a site with a paired gateway, a person in an access group that opens the site,
+    # an event from the gateway, an unused pairing code and a service token.
+    world.site = f.SiteFactory(organisation=organisation, name=f"{marker} Clinic", address=f"1 {marker} Street")
+    world.person = f.PersonFactory(
+        organisation=organisation, name=f"{marker} Nurse", work_email=f"nurse.{marker.lower()}@example.test"
+    )
+    world.access_group = f.AccessGroupFactory(organisation=organisation, name=f"{marker} Nurses")
+    f.AccessGroupMemberFactory(organisation=organisation, access_group=world.access_group, person=world.person)
+    f.AccessGroupSiteFactory(organisation=organisation, access_group=world.access_group, site=world.site)
+    world.gateway_credential = f"hubgw_{marker.lower()}_credential"
+    world.gateway = f.GatewayFactory(
+        organisation=organisation,
+        site=world.site,
+        name=f"{marker} gateway",
+        credential_hash=hash_token(world.gateway_credential),
+        state={"doors": [{"door_ref": "front", "name": f"{marker} front door", "state": "locked", "mode": "normal"}]},
+    )
+    world.pairing_code = f.PairingCodeFactory(
+        organisation=organisation,
+        site=f.SiteFactory(organisation=organisation, name=f"{marker} Depot"),
+        code_hash=hash_token(f"{letter}AAA-BBBB-CCCC"),
+    )
+    world.event = f.GatewayEventFactory(
+        organisation=organisation,
+        site=world.site,
+        gateway=world.gateway,
+        person=world.person,
+        data={"door": f"{marker} front door"},
+    )
+    world.service_token_value = f"hubsvc_{marker.lower()}_token"
+    world.service_token = f.ServiceTokenFactory(
+        organisation=organisation, name=f"{marker} rostering", token_hash=hash_token(world.service_token_value)
     )
     return world
 

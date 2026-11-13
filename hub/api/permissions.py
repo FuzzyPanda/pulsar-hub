@@ -12,3 +12,34 @@ class IsOrganisationMember(BasePermission):
             return False
         minimum = getattr(view, "minimum_role", Role.STAFF)
         return membership.has_role(minimum)
+
+
+class IsGateway(BasePermission):
+    """The caller is a paired gateway, and the site in the address is the one it is paired to.
+
+    A gateway asking about any other site, in its own organisation or another, gets the same 404
+    as for a site that does not exist."""
+
+    def has_permission(self, request, view) -> bool:
+        from django.http import Http404
+
+        gateway = getattr(request._request, "gateway", None)
+        if gateway is None:
+            return False
+        site_ref = view.kwargs.get("site_ref")
+        if site_ref is not None and str(site_ref) != str(gateway.site_id):
+            raise Http404
+        return True
+
+
+class HasScope(BasePermission):
+    """A service token holding the view's `required_scope`, or (where the view sets
+    `minimum_role`) a member with at least that role using a user token."""
+
+    def has_permission(self, request, view) -> bool:
+        token = getattr(request._request, "service_token", None)
+        if token is not None:
+            return token.has_scope(view.required_scope)
+        minimum = getattr(view, "minimum_role", None)
+        membership = getattr(request._request, "membership", None)
+        return minimum is not None and membership is not None and membership.has_role(minimum)

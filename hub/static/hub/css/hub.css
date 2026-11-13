@@ -263,3 +263,10 @@ img.qr { display: block; max-width: 14rem; width: 100%; height: auto; background
 a.card { display: block; color: var(--ink); text-decoration: none; }
 a.card:hover { border-color: var(--accent); color: var(--ink); }
 a.card h2 { color: var(--accent); }
+
+/* One-time secrets: pairing codes and service tokens */
+.pairing-code { font-size: 1.8rem; font-weight: 700; letter-spacing: 0.08em; padding: 0.75rem 1rem; background: var(--card-2); border: 1px solid var(--line-strong); border-radius: var(--r); margin: 0 0 1rem; overflow-wrap: anywhere; }
+.secret-block { padding: 0.6rem 0.8rem; background: var(--card); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--r); overflow-wrap: anywhere; user-select: all; }
+.grid + .grid, .grid + section.card { margin-top: 1.25rem; }
+.page-head h2 { margin: 0; }
+.pager + .card { margin-top: 1.25rem; }
