@@ -1,6 +1,6 @@
 # Plan
 
-**Drafted 2026-11-13.** H0 and H1 are built (2026-11-13); H2 onward is not started. Tick items as they land.
+**Drafted 2026-11-13.** H0 to H3 are built, and the intake half of H4 (2026-11-13). H5 onward is not started. Tick items as they land.
 
 ## Phases at a glance
 
@@ -8,7 +8,7 @@
 |---|---|---|
 | H0 | A running, tested, empty service | — |
 | H1 | Organisations, login, MFA, single sign-on | H0 |
-| H2 | People and sites, shared with TIM2 | H1, decision D3 |
+| H2 | People and sites, shared with Pulsar Rostering | H1, decision D3 |
 | H3 | Gateways paired; people and access synced to every site | H2, PAC items A0–A3 |
 | H4 | Remote view: doors, events, who is on site, alerts | H3 |
 | H5 | Hub-issued rotating QR credential | H3, PAC reader support |
@@ -65,40 +65,50 @@ protection (not yet set up).
 
 **Hub as the sign-in for other products**
 
-- [x] OIDC provider with PKCE for the Pulsar app and for TIM2.
+- [x] OIDC provider with PKCE for the Pulsar app (and for Pulsar Rostering, if decision D8 goes that way).
 - [x] Token claims carry the user, the organisation and the role, nothing sensitive.
 - [x] Audit log: sign-in, MFA changes, role changes, operator access.
 
 ## H2 — Directory
 
-- [ ] `Person` (`person_ref`, name, work email, status, optional link to a login).
-- [ ] `Site` (`site_ref`, name, address, timezone).
-- [ ] `AccessGroup` per organisation ("Managers", "Cleaners"), assigned to people.
-- [ ] TIM2 link, per decision D3: people and sites flow from TIM2 where an organisation uses
-  rostering; the hub is the source where it does not. One direction per organisation, never both.
+- [x] `Person` (`person_ref`, name, work email, status, optional link to a login).
+- [x] `Site` (`site_ref`, name, address, timezone).
+- [x] `AccessGroup` per organisation ("Managers", "Cleaners"), assigned to people. A group also names
+  the sites it opens, which is what makes access multi-site.
+- [x] Pulsar Rostering link, per decision D3: people and sites come from Rostering where an
+  organisation rosters; the hub is the source where it does not. One direction per organisation,
+  never both. Rostering sends a full snapshot with a service token (`PUT /api/v1/directory`).
 - [ ] CSV import for organisations with neither.
-- [ ] Service tokens (hashed, scoped) and `/api/v1/` for other systems.
+- [x] Service tokens (hashed, scoped) and `/api/v1/` for other systems.
 
 ## H3 — Gateways and multi-site access
 
-- [ ] Pair a PAC gateway to a site with a one-time code; show last contact; revoke.
-- [ ] A site can be marked as access-managed elsewhere (a PerfectGym site). It cannot be paired,
-  and H3 to H6 features are hidden for it. Rostering and sign-in work as normal.
-- [ ] Desired access per site: people, active or not, access groups. The gateway pulls and
+- [x] Pair a PAC gateway to a site with a one-time code; show last contact; revoke.
+- [x] A site can be marked as access-managed elsewhere (a PerfectGym site). It cannot be paired,
+  and cannot be added to an access group. Rostering and sign-in work as normal.
+- [x] Desired access per site: people, active or not, access groups. The gateway pulls and
   acknowledges a version. Contract in `CONTRACTS.md`.
-- [ ] Per-site mapping from hub access groups to that gateway's own access levels, done once at
-  commissioning.
-- [ ] Ending a person removes access at every site on each gateway's next pull; the hub shows
+- [x] Per-site mapping from hub access groups to that gateway's own access levels, done once at
+  commissioning. It lives on the gateway (its "Pulsar Hub" page), not in the hub.
+- [x] Ending a person removes access at every site on each gateway's next pull; the hub shows
   access as unconfirmed until that site acknowledges.
-- [ ] Signed event intake with idempotency; forward attendance events to TIM2.
-- [ ] Stays local to each gateway, by design: doors, wiring, schedules, alarm areas,
-  anti-passback, occupancy counts.
+- [x] Signed event intake with idempotency. Pulsar Rostering reads attendance events from the hub
+  with a cursor (`GET /api/v1/events`); the hub does not call Rostering.
+- [x] Stays local to each gateway, by design: doors, wiring, schedules, alarm areas,
+  anti-passback, occupancy counts, and every card and PIN.
+
+The gateway side is in `Pulsar-Access-Control` (`integration-sync/internal/hublink`) and the
+Rostering side in `pulsar-rostering` (`applications/access`). **None of it has run against a real
+gateway yet**: it is tested against each side's own fakes and against each other on one machine.
 
 ## H4 — Remote view
 
-- [ ] Per site and across sites: door state, recent events, who is on site, gateway health.
-- [ ] Alerts (door forced, held open, gateway out of contact) to email and to the app.
-- [ ] Read-only. No action in this phase can change a door.
+- [x] Per site: door state, recent events, who is on site, gateway health. The gateway posts a
+  door-state snapshot and events; the hub shows them on the site's page and the events page.
+- [ ] Across sites: one page for every site's doors and alerts.
+- [ ] Alerts (door forced, held open, gateway out of contact) to email and to the app. The events
+  arrive and are shown; nothing is sent yet.
+- [x] Read-only. No action in this phase can change a door.
 
 ## H5 — Hub-issued credential
 

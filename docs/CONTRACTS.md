@@ -1,7 +1,7 @@
 # Contracts — ids, pairing, calls and events
 
 **Proposed 2026-11-13.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
-gateway and TIM2 sections are still proposals. If an implementation differs from this file, change
+sections on gateways and Pulsar Rostering are built on the hub side. If an implementation differs from this file, change
 this file in the same pull request.
 
 ## Identifiers
@@ -19,7 +19,7 @@ OIDC `sub` (UUID v4); it is not a `person_ref`. A person record (H2) may link to
 
 ## Sign-in (built in H1)
 
-The hub is an OpenID Connect provider. The Pulsar app and TIM2 are clients, registered by Pulsar
+The hub is an OpenID Connect provider. The Pulsar app is a client, registered by Pulsar
 staff; there is no self-service client registration.
 
 | Item | Value |
@@ -256,8 +256,7 @@ today, and whether the two merge is an open decision (D8).
 - Sign-in: OIDC authorisation code with PKCE, as above. Tokens are per device and revocable.
 - All app calls are under `/api/v1/` and scoped to the signed-in user and the organisation the
   token is for. The organisation cannot be named in a URL, header or body.
-- Rostering screens call TIM2's mobile API (`TimeIsMoney2/docs/api/mobile-v1.md`) with a token the
-  hub sign-in authorises.
+- Rostering screens call Pulsar Rostering's own API with Rostering's own sign-in for now (decision D8).
 
 | Call | Returns | Role | Phase |
 |---|---|---|---|
@@ -267,9 +266,12 @@ today, and whether the two merge is an open decision (D8).
 
 ## Failure behaviour
 
-| Situation | Gateway | Hub |
-|---|---|---|
-| Hub unreachable | Keeps last synced people and credentials; queues events | — |
-| Gateway silent | — | Site shown as out of contact; attendance for the gap flagged incomplete |
-| Person ended while a gateway is offline | Access removed on next pull | Access shown as unconfirmed for that site |
-| Remote action older than its time limit | Refused and reported | Shown as expired |
+| Situation | Gateway | Hub | Rostering |
+|---|---|---|---|
+| Hub unreachable | Keeps the people it last synced; queues events and sends them oldest first when the hub returns | — | Keeps polling; nothing is lost, events wait in the hub |
+| Gateway silent | — | Site shown as out of contact after five minutes; access shown as unconfirmed | Attendance for the gap arrives when the gateway reconnects |
+| Person ended while a gateway is offline | Access removed on its next pull | Access shown as unconfirmed for that site | — |
+| Gateway revoked, or its site or organisation closed | Gets `401`; stops calling; keeps its last people; doors unchanged | Stops accepting its calls | — |
+| Rostering sends nothing | — | Keeps the last copy; nothing expires | — |
+| Rostering sends an empty list by mistake | — | Refuses it (`409`); no access is removed | Shows the error; a person must act |
+| Access group has no mapping at a site | Grants nothing for it; reports it in the acknowledgement | Shows the site as applied with problems, naming the people | — |

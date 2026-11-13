@@ -7,7 +7,7 @@
 
 | # | Idea | Built on | Notes |
 |---|---|---|---|
-| F1 | Licence-gated access | TIM2 licence and certification expiry + PAC access | Expired ticket blocks the relevant door; warn the manager first. Recommended first |
+| F1 | Licence-gated access | Pulsar Rostering qualification expiry + PAC access | Expired ticket blocks the relevant door; warn the manager first. Recommended first |
 | F2 | Contractor and visitor kiosk | PAC visitor passes | Tablet sign-in, induction acknowledgement, time-boxed pass |
 | F3 | Alarm tied to the roster | PAC alarm areas, first-person-in unlock | First rostered in disarms, last out arms, alert if left unarmed |
 | F4 | Lone-worker check-in in the app | PAC lone-worker timers and duress alerts | Clinics, after-hours staff |
