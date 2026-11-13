@@ -27,9 +27,9 @@ H0 to H2 need nothing from PAC. H1 is the largest piece.
   The service runs as a second database role that cannot change the schema or rewrite the audit
   log; only the entrypoint's migration step uses the owning role.
 - [x] CI on every pull request: `ruff`, `pytest`, `makemigrations --check`, secret scan.
-  Written, and every step passes locally. **It has not run on GitHub yet**: the repository did not
-  exist when H0 was built. Confirm the first run, then make "Organisation isolation suite" a
-  required check on `main`.
+  First run on GitHub passed on 2026-11-13 (lint, tests, isolation suite, secret scan, Compose config,
+  Docker build). Still to do in the repository settings: make "Organisation isolation suite" and
+  "Secret scan" required checks on `main`.
 - [x] Structured JSON logs; error monitoring hook.
 
 ## H1 — Identity and organisations
@@ -61,7 +61,7 @@ H0 to H2 need nothing from PAC. H1 is the largest piece.
 H1 was reviewed independently for security on 2026-11-13. No path across organisations was found.
 The twelve other defects it proved are fixed, each with a regression test in
 `tests/test_hardening.py`. It could not cover live Microsoft or Google sign-in, or GitHub branch
-protection.
+protection (not yet set up).
 
 **Hub as the sign-in for other products**
 
