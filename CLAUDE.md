@@ -128,6 +128,6 @@ pytest -m isolation             # the organisation isolation suite on its own
 docker compose up --build       # web, worker, Postgres and Caddy, as production runs them
 # In Compose the service runs as a lesser database role. Commands that change the schema need the owner:
 docker compose run --rm -e HUB_DATABASE_AS_OWNER=1 web python manage.py migrate
-python manage.py generate_oidc_key                    # a value for OIDC_RSA_PRIVATE_KEY
+python -m hub.accounts.oidc_keys                      # a value for OIDC_RSA_PRIVATE_KEY (needs no settings)
 python manage.py provision_organisation "Name" owner@example.com --operator you@example.com
 ```

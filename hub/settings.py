@@ -271,7 +271,7 @@ OIDC_RSA_PRIVATE_KEY = env.str("OIDC_RSA_PRIVATE_KEY", default="", multiline=Tru
 if not OIDC_RSA_PRIVATE_KEY:
     if not DEBUG:
         raise ImproperlyConfigured(
-            "OIDC_RSA_PRIVATE_KEY is not set. Generate one with `python manage.py generate_oidc_key`."
+            "OIDC_RSA_PRIVATE_KEY is not set. Generate one with `python -m hub.accounts.oidc_keys`."
         )
     # Development only: a key that lasts until the process exits, so every token dies with it.
     from hub.accounts.oidc_keys import generate_rsa_private_key_pem

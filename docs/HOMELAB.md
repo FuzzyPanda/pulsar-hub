@@ -30,7 +30,7 @@ Edit `.env`. The values that matter for a plain-HTTP lab:
 
 ```bash
 docker compose build
-docker compose run --rm --entrypoint python web manage.py generate_oidc_key
+docker compose run --rm --entrypoint python web -m hub.accounts.oidc_keys
 ```
 
 Put the key in `.env` on one line, in single quotes, with `\n` between its lines, as the comment
