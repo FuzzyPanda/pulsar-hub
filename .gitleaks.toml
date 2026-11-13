@@ -1,0 +1,12 @@
+title = "Pulsar Hub gitleaks config"
+
+[extend]
+useDefault = true
+
+# Placeholders and throwaway test values only. Real secrets must never match these paths.
+[[allowlists]]
+description = "Placeholder values in .env.example and test-only settings"
+paths = [
+  '''^\.env\.example$''',
+  '''^hub/test_settings\.py$''',
+]

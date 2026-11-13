@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+{% block title %}Join {{ invited_organisation.name }}{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>Join {{ invited_organisation.name }}</h1>
+    <p>You have been invited to join {{ invited_organisation.name }} as {{ role_label }}, using the email address {{ invitation.email }}.</p>
+    {% if matches %}
+      <form method="post">
+        {% csrf_token %}
+        <div class="actions"><button class="btn" type="submit">Join {{ invited_organisation.name }}</button></div>
+      </form>
+    {% elif user.is_authenticated %}
+      <div class="alert alert-warning">You are signed in as {{ user.email }}, which is not the invited address. Sign out, then open the invitation link again with {{ invitation.email }}.</div>
+      <form method="post" action="{% url 'account_logout' %}">
+        {% csrf_token %}
+        <div class="actions"><button class="btn btn-secondary" type="submit">Sign out</button></div>
+      </form>
+    {% else %}
+      {% if providers %}
+        <div class="actions vertical">
+          {% for provider in providers %}
+            <form method="post" action="{% provider_login_url provider.provider next=request.path %}">
+              {% csrf_token %}
+              <button class="btn btn-block" type="submit">Continue with {{ provider.label }}</button>
+            </form>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if not sso_required %}
+        {% if providers %}<hr>{% endif %}
+        <div class="actions">
+          {% if account_exists %}
+            <a class="btn" href="{% url 'account_login' %}?next={{ request.path|urlencode }}">Sign in</a>
+            <span class="muted">An account already exists for this address.</span>
+          {% else %}
+            <a class="btn" href="{% url 'account_signup' %}?next={{ request.path|urlencode }}">Create an account</a>
+          {% endif %}
+        </div>
+      {% elif not providers %}
+        <p>This organisation requires work account sign-in, but none has been set up. Ask the person who invited you.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

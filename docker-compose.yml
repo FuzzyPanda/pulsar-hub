@@ -1,0 +1,104 @@
+# Pulsar Hub — base Docker Compose. Builds from source; production layers
+# docker-compose.prod.yml on top (published image, production Caddyfile, restart policies).
+#
+# Invariants: only caddy publishes host ports; db and web stay on the internal network; dependents
+# wait on health checks; web migrates before it serves and the worker waits for web.
+#
+# Required in .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DJANGO_SECRET_KEY and the rest
+# of .env.example. DATABASE_URL is composed below from the POSTGRES_* values, so it is set once.
+
+name: pulsar-hub
+
+# Least-privilege settings for the application containers. The image runs as uid 10001 and needs
+# no Linux capabilities. The root filesystem is read-only; /tmp is a tmpfs (gunicorn's worker
+# heartbeat files). Python bytecode is not written (PYTHONDONTWRITEBYTECODE in the image).
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp"]
+
+x-app-env: &app-env
+  # Host is the compose service name `db`. A password with URL-special characters (@ : / ? #)
+  # must be percent-encoded, or use a hex password (`openssl rand -hex 24`).
+  DATABASE_URL: postgres://${POSTGRES_USER:?set in .env}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:?set in .env}
+
+networks:
+  hub-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  caddy-data:
+  caddy-config:
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [hub-net]
+    # No ports are published. Only containers on hub-net can reach the database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    <<: *hardened
+    image: pulsar-hub:local              # named so `worker` reuses the same image
+    build:
+      context: .
+    command: ["web"]
+    env_file: [.env]
+    environment:
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    expose: ["8000"]                     # internal only; caddy proxies to it
+    networks: [hub-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Migrations run before gunicorn binds; failures in this window do not count.
+      start_period: 120s
+      start_interval: 2s
+
+  worker:
+    <<: *hardened
+    image: pulsar-hub:local              # same image as web, different role
+    command: ["worker"]
+    env_file: [.env]
+    environment:
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy       # web owns migrations; the worker starts after them
+    networks: [hub-net]
+
+  caddy:
+    image: caddy:2.8-alpine
+    # no-new-privileges only: caddy runs as root in its image and binds 80/443.
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"                          # the ONLY service that publishes to the host
+      - "443:443"
+      - "443:443/udp"                    # HTTP/3
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [hub-net]

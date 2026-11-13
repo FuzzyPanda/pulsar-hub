@@ -1,0 +1,2 @@
+{% load allauth %}
+<div class="alert{% if attrs.tags %} alert-{{ attrs.tags.0 }}{% endif %}" role="alert">{% slot message %}{% endslot %}</div>

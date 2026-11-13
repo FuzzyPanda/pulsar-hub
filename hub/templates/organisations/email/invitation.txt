@@ -1,0 +1,10 @@
+{% autoescape off %}Hello,
+
+{% if invited_by %}{{ invited_by.display_name }} has invited you{% else %}You have been invited{% endif %} to join {{ organisation.name }} on {{ product_name }} as {{ role }}.
+
+Open this link to accept:
+
+{{ link }}
+
+The link works once and expires on {{ expires_at|date:"j F Y" }} (UTC). If you were not expecting this, you can ignore this email.
+{% endautoescape %}

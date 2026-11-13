@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+{% block title %}Single sign-on required{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>Sign in with your work account</h1>
+    <p>{{ sso_organisation.name }} requires people to sign in with their Microsoft or Google work account. Choose the provider your organisation uses.</p>
+    {% if providers %}
+      <div class="actions vertical">
+        {% for provider in providers %}
+          <form method="post" action="{% provider_login_url provider.provider next=next %}">
+            {% csrf_token %}
+            <button class="btn btn-block" type="submit">Continue with {{ provider.label }}</button>
+          </form>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>Work account sign-in is not available for this organisation yet. Ask an Owner of the organisation.</p>
+    {% endif %}
+  </div>
+{% endblock %}

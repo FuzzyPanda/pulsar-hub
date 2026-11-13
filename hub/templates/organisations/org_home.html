@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ organisation.name }}{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ organisation.name }}</h1>
+    <span class="badge badge-info">{{ role.label }}</span>
+  </div>
+  <div class="grid">
+    <section class="card">
+      <h2>Members</h2>
+      <p class="stat">{{ member_count }}</p>
+      <p class="muted">Active members of this organisation.</p>
+    </section>
+    {% if can_manage %}
+      <section class="card">
+        <h2>Pending invitations</h2>
+        <p class="stat">{{ pending_invitations }}</p>
+        <p class="muted">Invitations sent and not yet accepted.</p>
+      </section>
+    {% endif %}
+  </div>
+  {% if can_manage %}
+    <section class="card">
+      <h2>Pulsar operator visits</h2>
+      {% if operator_visits %}
+        <p class="muted">These Pulsar staff have temporary access. Every visit is recorded in the audit log.</p>
+        <ul class="list">
+          {% for visit in operator_visits %}
+            <li>
+              <div>
+                <strong>{{ visit.operator.display_name }}</strong><br>
+                <span class="muted small">Reason: {{ visit.reason }}. Ends {{ visit.expires_at|date:"j M Y, H:i" }} UTC.</span>
+              </div>
+              {% if membership.role == "owner" %}
+                <form method="post" action="{% url 'operator_access_end' org_slug=organisation.slug access_id=visit.id %}">
+                  {% csrf_token %}
+                  <button class="btn btn-danger-quiet btn-sm" type="submit">End operator access</button>
+                </form>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="empty">No Pulsar staff are visiting this organisation.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}

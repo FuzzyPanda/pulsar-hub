@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Organisation suspended{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>{{ suspended_organisation.name }} is suspended</h1>
+    <p>Access to this organisation is paused, so you cannot open it right now.</p>
+    {% if suspended_organisation.suspended_reason %}<p class="muted">Reason given: {{ suspended_organisation.suspended_reason }}</p>{% endif %}
+    <p>Contact your Pulsar representative if you think this is a mistake.</p>
+    <div class="actions"><a class="btn btn-secondary" href="{% url 'home' %}">Back to your organisations</a></div>
+  </div>
+{% endblock %}

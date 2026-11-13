@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Authorise {{ application.name }}{% endblock %}
+{% block main_class %}page-narrow{% endblock %}
+{% block content %}
+    <div class="block-center">
+        {% if not error %}
+            <form id="authorizationForm" method="post" action="">
+                <h1 class="block-center-heading">{% trans "Authorize" %} {{ application.name }}{% if token_organisation %} for {{ token_organisation.name }}{% endif %}?</h1>
+                {% csrf_token %}
+
+                {% for field in form %}
+                    {% if field.is_hidden %}
+                        {{ field }}
+                    {% endif %}
+                {% endfor %}
+
+                <p>{% trans "Application requires the following permissions" %}</p>
+                <ul class="scopes">
+                    {% for scope in scopes_descriptions %}
+                        <li>{{ scope }}</li>
+                    {% endfor %}
+                </ul>
+
+                {{ form.errors }}
+                {{ form.non_field_errors }}
+
+                <div class="control-group">
+                    <div class="controls actions">
+                        <input type="submit" class="btn btn-secondary" value="{% trans 'Cancel' %}"/>
+                        <input type="submit" class="btn" name="allow" value="{% trans 'Authorize' %}"/>
+                    </div>
+                </div>
+            </form>
+
+        {% else %}
+            <h1>Error: {{ error.error }}</h1>
+            <p>{{ error.description }}</p>
+        {% endif %}
+    </div>
+{% endblock %}

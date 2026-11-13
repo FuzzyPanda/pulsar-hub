@@ -1,0 +1,8 @@
+# Development proxy: plain HTTP on :80, no certificates. Production uses Caddyfile.prod.
+{
+	auto_https off
+}
+
+:80 {
+	reverse_proxy web:8000
+}

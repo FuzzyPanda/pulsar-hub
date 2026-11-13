@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Operator console{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Operator console</h1></div>
+  <p class="lede">Organisations on this service. Opening one starts a recorded, time-limited visit and needs a reason.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Address</th><th>Status</th><th class="cell-wide">Open a visit</th><th class="cell-wide">Suspend or reactivate</th><th class="cell-wide">Delete</th></tr></thead>
+      <tbody>
+        {% for org in organisations %}
+          <tr>
+            <td>{{ org.name }}</td>
+            <td class="mono">{{ org.slug }}</td>
+            <td>
+              {% if org.status == "active" %}<span class="badge badge-ok">Active</span>
+              {% elif org.status == "suspended" %}<span class="badge badge-warn">Suspended</span>
+              {% else %}<span class="badge badge-bad">{{ org.get_status_display }}</span>{% endif %}
+            </td>
+            <td>
+              <form class="inline-form" method="post" action="{% url 'operator_open_access' org_ref=org.id %}">
+                {% csrf_token %}
+                <div class="field"><label class="visually-hidden" for="reason-{{ org.id }}">Reason for visiting {{ org.name }}</label><input id="reason-{{ org.id }}" type="text" name="reason" placeholder="Reason" maxlength="255" required></div>
+                <button class="btn btn-secondary btn-sm" type="submit">Open organisation</button>
+              </form>
+            </td>
+            <td>
+              {% if org.status == "suspended" %}
+                <form method="post" action="{% url 'operator_set_status' org_ref=org.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="reactivate">
+                  <button class="btn btn-secondary btn-sm" type="submit">Reactivate organisation</button>
+                </form>
+              {% elif org.status == "active" %}
+                <form class="inline-form" method="post" action="{% url 'operator_set_status' org_ref=org.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="suspend">
+                  <div class="field"><label class="visually-hidden" for="suspend-{{ org.id }}">Reason for suspending {{ org.name }}</label><input id="suspend-{{ org.id }}" type="text" name="reason" placeholder="Reason" maxlength="255" required></div>
+                  <button class="btn btn-danger-quiet btn-sm" type="submit">Suspend organisation</button>
+                </form>
+              {% endif %}
+            </td>
+            <td>
+              <form class="inline-form" method="post" action="{% url 'operator_delete' org_ref=org.id %}">
+                {% csrf_token %}
+                <div class="field"><label class="visually-hidden" for="delete-{{ org.id }}">Type {{ org.slug }} to confirm deleting {{ org.name }}</label><input id="delete-{{ org.id }}" type="text" name="confirm_slug" placeholder="Type {{ org.slug }}" autocomplete="off" required></div>
+                <button class="btn btn-danger btn-sm" type="submit">Delete organisation</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="empty">There are no organisations yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <section class="card">
+    <h2>Create an organisation</h2>
+    <p class="muted">The owner receives an invitation by email and sets up their own sign-in.</p>
+    <form method="post" action="{% url 'operator_provision' %}">
+      {% csrf_token %}
+      <div class="form-grid">
+        <div class="field"><label for="prov-name">Organisation name</label><input id="prov-name" type="text" name="name" maxlength="200" required></div>
+        <div class="field"><label for="prov-owner">Owner email address</label><input id="prov-owner" type="email" name="owner_email" required></div>
+      </div>
+      <div class="actions"><button class="btn" type="submit">Create organisation</button></div>
+    </form>
+  </section>
+{% endblock %}

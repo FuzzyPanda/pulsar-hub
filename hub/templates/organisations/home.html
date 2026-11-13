@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Your organisations{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Your organisations</h1>
+    {% if user.is_platform_operator %}<a class="btn btn-secondary" href="{% url 'operator_home' %}">Operator console</a>{% endif %}
+  </div>
+  {% if memberships %}
+    <div class="grid">
+      {% for m in memberships %}
+        <a class="card" href="{% url 'org_home' org_slug=m.organisation.slug %}">
+          <h2>{{ m.organisation.name }}</h2>
+          <p class="muted">Your role: {{ m.get_role_display }}</p>
+          {% if not m.organisation.is_active %}<span class="badge badge-warn">Suspended</span>{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="card"><p class="empty">You are not a member of any organisation yet. Ask for an invitation.</p></div>
+  {% endif %}
+{% endblock %}

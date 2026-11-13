@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Settings</h1></div>
+  <div class="stack">
+    <section class="card">
+      <h2>Organisation name</h2>
+      <form method="post" action="{% url 'org_settings' org_slug=organisation.slug %}">
+        {% csrf_token %}
+        <div class="field">
+          <label for="org-name">Name</label>
+          <input id="org-name" type="text" name="name" value="{{ organisation.name }}" maxlength="200" required>
+          <p class="hint">The address of this organisation is <code>/org/{{ organisation.slug }}/</code> and does not change.</p>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Save name</button></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Sign-in rules</h2>
+      {% if is_owner %}
+        <form method="post" action="{% url 'org_security' org_slug=organisation.slug %}">
+          {% csrf_token %}
+          <div class="check">
+            <input id="staff-mfa" type="checkbox" name="staff_mfa_required"{% if organisation.staff_mfa_required %} checked{% endif %}>
+            <label for="staff-mfa">Require two-step sign-in for Staff. Owners, Admins and Managers always need it.</label>
+          </div>
+          <div class="check">
+            <input id="sso-required" type="checkbox" name="sso_required"{% if organisation.sso_required %} checked{% endif %}>
+            <label for="sso-required">Require members to sign in with Microsoft or Google. Add an identity provider below first, or no one will be able to sign in.</label>
+          </div>
+          <div class="actions"><button class="btn" type="submit">Save sign-in rules</button></div>
+        </form>
+      {% else %}
+        <ul class="list">
+          <li><span>Two-step sign-in for Staff</span><span class="badge{% if organisation.staff_mfa_required %} badge-ok{% endif %}">{% if organisation.staff_mfa_required %}Required{% else %}Not required{% endif %}</span></li>
+          <li><span>Microsoft or Google sign-in only</span><span class="badge{% if organisation.sso_required %} badge-ok{% endif %}">{% if organisation.sso_required %}Required{% else %}Not required{% endif %}</span></li>
+        </ul>
+        <p class="hint">Only an Owner can change these rules.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Identity providers</h2>
+      <p class="muted">Link your Microsoft Entra tenant or Google Workspace domain so people can sign in with their work account. People still join by invitation.</p>
+      {% if identity_providers %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Provider</th><th>Tenant or domain</th>{% if is_owner %}<th>Actions</th>{% endif %}</tr></thead>
+            <tbody>
+              {% for idp in identity_providers %}
+                <tr>
+                  <td>{{ idp.get_provider_display }}</td>
+                  <td class="mono">{{ idp.tenant }}</td>
+                  {% if is_owner %}
+                    <td>
+                      <form method="post" action="{% url 'identity_provider_remove' org_slug=organisation.slug idp_id=idp.id %}">
+                        {% csrf_token %}
+                        <button class="btn btn-danger-quiet btn-sm" type="submit">Remove provider</button>
+                      </form>
+                    </td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">No identity providers are linked.</p>
+      {% endif %}
+      {% if is_owner %}
+        <h3>Add an identity provider</h3>
+        <form method="post" action="{% url 'identity_provider_add' org_slug=organisation.slug %}">
+          {% csrf_token %}
+          <div class="form-grid">
+            <div class="field">
+              <label for="idp-provider">Provider</label>
+              <select id="idp-provider" name="provider">
+                {% for value, label in provider_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label for="idp-tenant">Tenant ID or domain</label>
+              <input id="idp-tenant" type="text" name="tenant" required autocomplete="off">
+              <p class="hint">For Microsoft, the Entra tenant ID. For Google, the Workspace domain, such as example.com.</p>
+            </div>
+          </div>
+          <div class="actions"><button class="btn" type="submit">Add identity provider</button></div>
+        </form>
+      {% endif %}
+    </section>
+
+    {% if is_owner %}
+      <section class="card">
+        <h2>Export your data</h2>
+        <p class="muted">Download everything this organisation holds in a single JSON file. The download is recorded in the audit log.</p>
+        <form method="post" action="{% url 'org_export' org_slug=organisation.slug %}">
+          {% csrf_token %}
+          <button class="btn btn-secondary" type="submit">Download export</button>
+        </form>
+      </section>
+    {% endif %}
+  </div>
+{% endblock %}

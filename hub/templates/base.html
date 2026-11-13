@@ -1,0 +1,71 @@
+{% load static %}<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} - {{ product_name }}</title>
+  <link rel="stylesheet" href="{% static 'hub/css/hub.css' %}">
+  <script src="{% static 'hub/js/htmx.min.js' %}" defer></script>
+  <script src="{% static 'hub/js/menu.js' %}" defer></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <a class="skip-link" href="#main">Skip to content</a>
+  {% if request.operator_access %}
+    <div class="banner-operator" role="status">
+      Pulsar operator access &mdash; reason: {{ request.operator_access.reason }} &mdash; ends {{ request.operator_access.expires_at|date:"j M Y, H:i" }} UTC
+    </div>
+  {% endif %}
+  <header class="site-header">
+    <div class="site-header__row">
+      <a class="brand" href="{% url 'home' %}">{{ product_name }}</a>
+      {% if user.is_authenticated %}
+        <details class="menu">
+          <summary>{{ user.display_name }}</summary>
+          <div class="menu__panel">
+            <a href="{% url 'home' %}">Organisations</a>
+            {% if user.is_platform_operator %}<a href="{% url 'operator_home' %}">Operator console</a>{% endif %}
+            <hr>
+            <a href="{% url 'mfa_index' %}">Two-step sign-in</a>
+            <a href="{% url 'usersessions_list' %}">Sessions</a>
+            <a href="{% url 'account_email' %}">Email</a>
+            <a href="{% url 'account_change_password' %}">Password</a>
+            <hr>
+            <form method="post" action="{% url 'account_logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+          </div>
+        </details>
+      {% endif %}
+    </div>
+    {% if organisation %}
+      {% with current=request.resolver_match.url_name %}
+      <div class="org-bar">
+        <div class="org-bar__row">
+          <span class="org-name">{{ organisation.name }}</span>
+          <nav class="org-nav" aria-label="Organisation">
+            <a href="{% url 'org_home' org_slug=organisation.slug %}"{% if current == 'org_home' %} aria-current="page"{% endif %}>Overview</a>
+            {% if request.operator_access or membership.role == "owner" or membership.role == "admin" or membership.role == "manager" %}
+              <a href="{% url 'member_list' org_slug=organisation.slug %}"{% if current == 'member_list' %} aria-current="page"{% endif %}>Members</a>
+            {% endif %}
+            {% if request.operator_access or membership.role == "owner" or membership.role == "admin" %}
+              <a href="{% url 'org_settings' org_slug=organisation.slug %}"{% if current == 'org_settings' %} aria-current="page"{% endif %}>Settings</a>
+              <a href="{% url 'audit_list' org_slug=organisation.slug %}"{% if current == 'audit_list' %} aria-current="page"{% endif %}>Audit log</a>
+            {% endif %}
+          </nav>
+        </div>
+      </div>
+      {% endwith %}
+    {% endif %}
+  </header>
+  {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}
+        <li class="message {{ message.tags }}"{% if message.level_tag == "error" %} role="alert"{% endif %}>{{ message }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  <main id="main" class="{% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+  {% block extra_body %}{% endblock %}
+</body>
+</html>

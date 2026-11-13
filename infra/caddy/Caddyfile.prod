@@ -1,0 +1,27 @@
+# Production proxy. Caddy obtains and renews the certificate for {$HUB_DOMAIN} automatically
+# (ACME, Let's Encrypt) and redirects HTTP to HTTPS. Ports 80 and 443 must be reachable from the
+# internet. Caddy keeps its certificates in the caddy-data volume: do not delete it.
+#
+# Django already sets HSTS, X-Content-Type-Options, X-Frame-Options and Referrer-Policy, so they
+# are deliberately not repeated here.
+{
+	email {$ACME_EMAIL}
+}
+
+{$HUB_DOMAIN} {
+	encode zstd gzip
+
+	# The liveness and readiness probes are for the container health check and internal uptime
+	# checks only. They are never served to the internet.
+	@probes path /healthz /healthz/ /readyz /readyz/
+	respond @probes 404
+
+	# Request bodies are small JSON or forms; refuse anything over 1 MB.
+	request_body {
+		max_size 1MB
+	}
+
+	header -Server
+
+	reverse_proxy web:8000
+}

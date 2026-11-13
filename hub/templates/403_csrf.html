@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Page expired{% endblock %}
+{% block content %}
+  <div class="error-page">
+    <p class="code">403</p>
+    <h1>That page has expired</h1>
+    <p class="muted">For your security the form could not be checked. Go back, reload the page and try again. If cookies are blocked in your browser, allow them for this site.</p>
+    <p><a class="btn" href="{% url 'home' %}">Go to your organisations</a></p>
+  </div>
+{% endblock %}

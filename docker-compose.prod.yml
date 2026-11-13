@@ -1,0 +1,31 @@
+# Production overlay: run the published image instead of building, use the production Caddyfile
+# (automatic HTTPS) and restart services unless stopped.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Required in .env: HUB_IMAGE (registry path without tag), HUB_DOMAIN, ACME_EMAIL.
+# Optional: HUB_IMAGE_TAG (default latest; pin a commit SHA for change control).
+#
+# Never run `up --build` with this overlay: it would replace the published image with a local build.
+
+services:
+  db:
+    restart: unless-stopped
+
+  web:
+    image: ${HUB_IMAGE:?set HUB_IMAGE}:${HUB_IMAGE_TAG:-latest}
+    build: !reset null
+    restart: unless-stopped
+
+  worker:
+    image: ${HUB_IMAGE:?set HUB_IMAGE}:${HUB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+
+  caddy:
+    restart: unless-stopped
+    environment:
+      HUB_DOMAIN: ${HUB_DOMAIN:?set HUB_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - ./infra/caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro

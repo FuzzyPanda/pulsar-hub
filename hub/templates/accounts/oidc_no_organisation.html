@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}No organisation{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>You cannot continue yet</h1>
+    <p>Your account does not belong to the organisation this sign-in needs. Ask for an invitation, or sign in with a different account.</p>
+    <div class="actions"><a class="btn btn-secondary" href="{% url 'home' %}">Go to your organisations</a></div>
+  </div>
+{% endblock %}

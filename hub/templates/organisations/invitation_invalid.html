@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Invitation not valid{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="card">
+    <h1>This invitation cannot be used</h1>
+    <p>The link may have expired, been used already or been withdrawn. Ask the person who invited you to send a new one.</p>
+    <div class="actions"><a class="btn btn-secondary" href="{% url 'home' %}">Go to {{ product_name }}</a></div>
+  </div>
+{% endblock %}

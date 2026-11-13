@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Not allowed{% endblock %}
+{% block content %}
+  <div class="error-page">
+    <p class="code">403</p>
+    <h1>You do not have access to that</h1>
+    <p class="muted">Your role does not allow this action. Ask an Owner or Admin if you think it should.</p>
+    <p><a class="btn" href="{% url 'home' %}">Go to your organisations</a></p>
+  </div>
+{% endblock %}

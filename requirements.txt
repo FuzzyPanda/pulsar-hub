@@ -1,0 +1,14 @@
+# Runtime dependencies. Ranges, as in the sibling repos; CI installs the newest match.
+Django>=5.2,<5.3
+djangorestframework>=3.16
+django-allauth[mfa,socialaccount]>=65.13
+django-oauth-toolkit>=3.2,<4
+django-q2>=1.9
+django-environ>=0.12
+django-htmx>=1.23
+psycopg[binary]>=3.2
+gunicorn>=23.0
+whitenoise>=6.9
+python-json-logger>=3.3
+sentry-sdk>=2.30
+argon2-cffi>=23.1

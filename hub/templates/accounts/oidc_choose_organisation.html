@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Choose an organisation{% endblock %}
+{% block main_class %}page-manage{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Choose an organisation</h1></div>
+  <p class="lede">You belong to more than one organisation. Choose the one to continue with.</p>
+  <ul class="list card">
+    {% for choice in choices %}
+      <li><strong>{{ choice.organisation.name }}</strong><a class="btn btn-secondary btn-sm" href="{{ choice.url }}">Continue with {{ choice.organisation.name }}</a></li>
+    {% endfor %}
+  </ul>
+{% endblock %}

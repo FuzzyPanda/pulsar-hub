@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Members{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Members</h1></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.membership.user.display_name }}{% if row.is_self %} <span class="badge">You</span>{% endif %}</td>
+            <td>{{ row.membership.user.email }}</td>
+            <td>
+              {% if can_manage and row.editable %}
+                <form class="inline-form" method="post" action="{% url 'member_role' org_slug=organisation.slug membership_id=row.membership.id %}">
+                  {% csrf_token %}
+                  <div class="field">
+                    <label class="visually-hidden" for="role-{{ row.membership.id }}">Role for {{ row.membership.user.display_name }}</label>
+                    <select id="role-{{ row.membership.id }}" name="role">
+                      {% for r in grantable_roles %}<option value="{{ r.value }}"{% if r.value == row.membership.role %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <button class="btn btn-secondary btn-sm" type="submit">Change role</button>
+                </form>
+              {% else %}
+                {{ row.membership.get_role_display }}
+              {% endif %}
+            </td>
+            {% if can_manage %}
+              <td>
+                {% if row.editable %}
+                  <form method="post" action="{% url 'member_remove' org_slug=organisation.slug membership_id=row.membership.id %}">
+                    {% csrf_token %}
+                    <button class="btn btn-danger-quiet btn-sm" type="submit">Remove member</button>
+                  </form>
+                {% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="empty">There are no members yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if can_manage %}
+    <section class="card">
+      <h2>Invite someone</h2>
+      <p class="muted">We email a link that lets this address join with the role you choose. The link works once.</p>
+      <form method="post" action="{% url 'invitation_create' org_slug=organisation.slug %}">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="invite-email">Email address</label><input id="invite-email" type="email" name="email" required autocomplete="off"></div>
+          <div class="field">
+            <label for="invite-role">Role</label>
+            <select id="invite-role" name="role">
+              {% for r in grantable_roles %}<option value="{{ r.value }}"{% if r.value == "staff" %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Send invitation</button></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Pending invitations</h2>
+      {% if pending_invitations %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Email</th><th>Role</th><th>Invited by</th><th>Expires</th><th>Actions</th></tr></thead>
+            <tbody>
+              {% for inv in pending_invitations %}
+                <tr>
+                  <td>{{ inv.email }}</td>
+                  <td>{{ inv.get_role_display }}</td>
+                  <td>{% if inv.invited_by %}{{ inv.invited_by.display_name }}{% else %}<span class="muted">Unknown</span>{% endif %}</td>
+                  <td class="nowrap">{{ inv.expires_at|date:"j M Y, H:i" }} UTC</td>
+                  <td>
+                    <form method="post" action="{% url 'invitation_revoke' org_slug=organisation.slug invitation_id=inv.id %}">
+                      {% csrf_token %}
+                      <button class="btn btn-secondary btn-sm" type="submit">Revoke invitation</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">There are no pending invitations.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}
