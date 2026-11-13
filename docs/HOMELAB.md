@@ -81,12 +81,21 @@ out"), and badge. The event appears on the hub's **Events** page within a poll (
 On the hub: **Settings → Connected systems → create a token** with "Send people and sites" and
 "Read door and attendance events". It is shown once.
 
-In Rostering (see its access application's documentation for the screen or API): set the hub
-address `http://hubhost`, paste the token, enable the link. If the hub is plain HTTP, Rostering
-also needs `HUB_LINK_ALLOW_INSECURE_HTTP=true`.
+In Rostering (`backend/applications/access/README.md` there has the detail):
+
+1. Run its migrations, and give the organisation the access application:
+   `manage.py set_entitlements --org <slug> --applications rostering,attendance,access`.
+2. Because this lab hub is plain HTTP, set `HUB_LINK_ALLOW_INSECURE_HTTP=true`.
+3. Have its scheduler and worker running (`manage.py run_scheduler`, `manage.py run_worker`): the
+   link is a job that runs once a minute.
+4. As an owner or admin, open the **Access** page and fill in the Pulsar Hub panel: the hub
+   address `http://hubhost` and the token. Or `PUT /api/v1/orgs/<slug>/access/hub-link`.
 
 Rostering then sends its people and sites about once a minute, and reads attendance events back.
-A badge at a clock-in door shows up against that person's shift in Rostering.
+Its people and sites appear in the hub with Rostering's own references, so pair the gateway
+(step 3) to the site **as Rostering sent it**, and put Rostering's people in the access group.
+A badge at a clock-in door is recorded in Rostering as a presence event for that person, marked as
+coming from the hub. It does not create a timesheet entry.
 
 ## What to check, and what "working" looks like
 
