@@ -1,6 +1,7 @@
 # Contracts — ids, pairing, calls and events
 
-**Proposed 2026-11-13. Nothing is built.** If an implementation differs from this file, change
+**Proposed 2026-11-13.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
+gateway and TIM2 sections are still proposals. If an implementation differs from this file, change
 this file in the same pull request.
 
 ## Identifiers
@@ -12,6 +13,58 @@ this file in the same pull request.
 | `site_ref` | UUID v4 | Hub, or TIM2 where it is the source | TIM2 location; PAC `Site.external_ref`, set at pairing |
 
 Names and email addresses are never join keys.
+
+`org_ref` is the primary key of the hub's organisation row. A login has its own stable id, the
+OIDC `sub` (UUID v4); it is not a `person_ref`. A person record (H2) may link to a login.
+
+## Sign-in (built in H1)
+
+The hub is an OpenID Connect provider. The Pulsar app and TIM2 are clients, registered by Pulsar
+staff; there is no self-service client registration.
+
+| Item | Value |
+|---|---|
+| Issuer | `{HUB_BASE_URL}/oauth` |
+| Discovery | `{issuer}/.well-known/openid-configuration` |
+| Endpoints | `/oauth/authorize/`, `/oauth/token/`, `/oauth/userinfo/`, `/oauth/revoke_token/`, `/oauth/logout/`, `/oauth/.well-known/jwks.json` |
+| Flow | Authorisation code with PKCE (`S256` only). No implicit, password or device flow |
+| Scopes | `openid` (required), `profile`, `email`, `offline_access` |
+| Signing | RS256; keys published at the JWKS address |
+| Lifetimes | Access and ID token 10 minutes; refresh token 30 days, rotated on every use; reuse of an old refresh token revokes the whole family |
+| Bearer tokens | In the `Authorization` header only, never in a query string. Stored by the hub as digests |
+
+**A token is for one user in one organisation.** A person who works for two employers signs in
+once and holds one token per organisation.
+
+- The client may name the organisation with `org=<org_ref>` on the authorisation request. Without
+  it, a user with one organisation gets that one and a user with several is asked to choose.
+- To obtain a token the browser session must pass the same rules as the web console: an active
+  membership, the organisation's single sign-on rule, and MFA where the role requires it.
+
+| Claim | Scope | Meaning |
+|---|---|---|
+| `sub` | `openid` | The login's id |
+| `org_ref` | `openid` | The organisation this token is for |
+| `org_role` | `openid` | `owner`, `admin`, `manager` or `staff` in that organisation, at issue time |
+| `name`, `org_name` | `profile` | Display names |
+| `email`, `email_verified` | `email` | The login's email address |
+
+Nothing else is ever a claim. A resource server must not treat `org_role` as live: the hub
+re-checks the membership on every API call, and a role change or removal deletes that user's
+tokens for the organisation, so a client learns of it within one access-token lifetime at most.
+
+A token stops working immediately when the user leaves or is removed from the organisation, the
+login is deactivated, or the organisation is suspended or deleted. For an organisation that
+requires single sign-on, a refresh token is honoured for 24 hours after the user last signed in
+through the organisation's directory (`SSO_REFRESH_MAX_AGE_HOURS`); after that the app must send
+the user through sign-in again.
+
+**Single sign-on with Microsoft Entra or Google.** Pulsar holds one application registration with
+each provider. An organisation lists which Entra tenant id or Google Workspace domain is its own;
+that row holds no secret. A directory never creates a membership: people still join by
+invitation, and a first sign-in through a directory is accepted only while accepting an invitation
+from an organisation that lists that directory, for the invited address. A directory's email claim
+is never used to match an existing login.
 
 ## Pairing a gateway
 
@@ -68,10 +121,17 @@ another connector, not as a replacement.
 
 ## Hub and the app
 
-- Sign-in: OIDC authorisation code with PKCE. Tokens are per device and revocable.
-- All app calls are under `/api/v1/` and scoped to the signed-in user and the chosen organisation.
+- Sign-in: OIDC authorisation code with PKCE, as above. Tokens are per device and revocable.
+- All app calls are under `/api/v1/` and scoped to the signed-in user and the organisation the
+  token is for. The organisation cannot be named in a URL, header or body.
 - Rostering screens call TIM2's mobile API (`TimeIsMoney2/docs/api/mobile-v1.md`) with a token the
   hub sign-in authorises.
+
+| Call | Returns | Role | Phase |
+|---|---|---|---|
+| `GET /api/v1/me` | `user_ref`, `name`, `email`, `organisation`, `role` | any member | H1 |
+| `GET /api/v1/organisation` | `org_ref`, `name`, `slug`, `status` | any member | H1 |
+| `GET /api/v1/organisation/members` | `user_ref`, `name`, `email`, `role` for each active member | Manager and above | H1 |
 
 ## Failure behaviour
 

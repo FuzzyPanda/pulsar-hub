@@ -53,11 +53,15 @@ case "$role" in
         # The shared database cache (rate limits, login throttles) needs its table; idempotent.
         log "ensuring cache table..."
         python manage.py createcachetable
+        # The root filesystem is read-only: worker heartbeat files go to the /tmp tmpfs, and the
+        # control socket (which gunicorn would put in the home directory) is off.
         log "starting gunicorn..."
         exec gunicorn hub.wsgi:application \
             --bind 0.0.0.0:8000 \
             --workers "${GUNICORN_WORKERS:-2}" \
             --timeout "${GUNICORN_TIMEOUT:-30}" \
+            --worker-tmp-dir /tmp \
+            --no-control-socket \
             --access-logfile -
         ;;
     worker)

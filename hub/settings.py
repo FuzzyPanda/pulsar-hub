@@ -61,6 +61,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "hub.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "hub.middleware.RequestContextMiddleware",
@@ -293,6 +294,20 @@ OAUTH2_PROVIDER = {
     "REFRESH_TOKEN_REUSE_PROTECTION": True,
     "REFRESH_TOKEN_GRACE_PERIOD_SECONDS": 0,
     "OIDC_RESPONSE_TYPES_SUPPORTED": ["code"],
+    # RFC 9700 (OAuth 2.0 Security Best Current Practice). The toolkit keeps these off by default
+    # until its 4.0 release so that upgrades do not change behaviour; a new service has nothing to
+    # keep compatible with. Tokens are stored as digests, are never accepted in a query string,
+    # and an insecure configuration fails `check --deploy`.
+    "COMPLIANT_BCP_RFC9700_IMPLICIT_GRANT": True,
+    "COMPLIANT_BCP_RFC9700_PASSWORD_GRANT": True,
+    "COMPLIANT_BCP_RFC9700_PKCE_METHOD": True,
+    "COMPLIANT_BCP_RFC9700_ACCESS_TOKEN_TRANSPORT": True,
+    "COMPLIANT_BCP_RFC9700_AUTHZ_RESPONSE_ISS": True,
+    "COMPLIANT_BCP_RFC9700_TOKEN_STORAGE": True,
+    "COMPLIANT_BCP_RFC9700_REFRESH_TOKEN": True,
+    "COMPLIANT_BCP_RFC9700_REDIRECT_URI_SCHEME": True,
+    "COMPLIANT_BCP_RFC9700_REDIRECT_URI_MATCHING": True,
+    "COMPLIANT_BCP_RFC9700_PKCE_REQUIRED": True,
     "OIDC_RP_INITIATED_LOGOUT_ENABLED": True,
     "OIDC_RP_INITIATED_LOGOUT_ALWAYS_PROMPT": True,
 }

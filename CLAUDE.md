@@ -53,17 +53,61 @@ Pulsar app and the link between Pulsar Access Control (PAC) and Time Is Money 2 
 
 Do not change sibling repos from a session in this one; raise what is needed in their plans.
 
-## Where to start
+## Where things are
 
-1. Read `docs/DECISIONS.md`. D1 (name) and D2 (hosting) do not block H0 or H1; D3 (TIM2 tenancy
-   alignment) should be answered before H2.
-2. Do phase **H0** in `docs/PLAN.md`: project scaffold, CI, Docker Compose, `.env.example`.
-3. Then **H1** in this order: organisations and memberships, the scoped manager and isolation
-   tests, login with MFA, then the OIDC provider.
-4. Tick boxes in `docs/PLAN.md` as items land, and update `docs/CONTRACTS.md` in the same change
-   whenever an implementation differs from it.
+H0 and H1 are built; H2 is next (answer decision D3 first). Tick boxes in `docs/PLAN.md` as items
+land, and update `docs/CONTRACTS.md` in the same change whenever an implementation differs from it.
+
+| Path | What |
+|---|---|
+| `hub/settings.py` | Every setting; all environment-driven. `hub/test_settings.py` is the test overlay |
+| `hub/organisations/` | Organisations, memberships, roles, invitations, operator visits, identity providers; the scoped manager (`scoping.py`), the current organisation (`context.py`), entry rules (`entry.py`, `middleware.py`), all writes (`services.py`), the web console (`views.py`) |
+| `hub/accounts/` | The login (`User`), allauth adapters, MFA and step-up helpers, the Entra provider, the OIDC provider (`oidc.py`, `oidc_views.py`) and its organisation-bound token models |
+| `hub/audit/` | The append-only audit log. Write with `audit.services.record(...)` |
+| `hub/api/` | `/api/v1/`: bearer-token authentication that sets the organisation, permissions, serializers |
+| `hub/directory/`, `hub/gateways/`, `hub/access/` | Empty until H2 and H3 |
+| `tests/isolation/` | The suite that gates CI (rule 1). `routes.py` lists every route |
+| `scripts/check_unscoped_access.py` | The lint for cross-organisation access |
+
+## How rule 1 is enforced, and what you must do
+
+- **A new business model** inherits `hub.organisations.scoping.OrganisationScopedModel`. A system
+  check fails otherwise. `Model.objects` returns only the current organisation's rows and raises
+  when there is none; saves refuse another organisation's rows and foreign keys that cross
+  organisations. Add a factory to `tests/factories.py` and to `FACTORIES` in
+  `tests/isolation/test_models.py` (a test fails until you do), and give `make_world` in
+  `tests/conftest.py` one row of it carrying the world's marker.
+- **A new console route** is declared with `org_path(...)` under `/org/<org_slug>/` and added to
+  `ORG_ROUTES` in `tests/isolation/routes.py`. **A new API route** goes in `API_ROUTES`. A test
+  fails for any route that is in neither and not under a listed prefix.
+- **Never** take an organisation from a URL, header or body in the API. The token decides.
+- **Reaching across organisations** (`.all_organisations`, `_base_manager`, raw SQL) needs
+  `# unscoped: <reason>` on the same line or the line above, or CI fails. Use it only before an
+  organisation is known (resolving a token or an invitation) or for a platform job.
+- **Jobs, commands and tests** wrap work in `with organisation_context(org):`.
+- **Changes go through `services.py`**, which checks the role and writes the audit event. Views
+  and API endpoints do not write business models directly.
+- **No business model in the Django admin.** Organisations are run from `/operator/`.
+- Sensitive actions take `@step_up_required` (a fresh MFA check). H6 must use it.
 
 ## Commands
 
-To be filled in by the H0 session (`docker compose up`, `pytest`, `ruff check .`,
-`python manage.py makemigrations --check --dry-run`).
+```bash
+# First time: Python 3.12 virtualenv and a local PostgreSQL 16 role that may create databases
+python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env            # set DJANGO_SECRET_KEY, DATABASE_URL, DJANGO_DEBUG=True
+
+python manage.py migrate && python manage.py createcachetable
+python manage.py create_operator you@example.com     # the first Pulsar operator
+python manage.py runserver
+
+ruff check . && ruff format --check .
+python scripts/check_unscoped_access.py
+python manage.py makemigrations --check --dry-run
+pytest                          # everything; uses hub.test_settings and its own test database
+pytest -m isolation             # the organisation isolation suite on its own
+
+docker compose up --build       # web, worker, Postgres and Caddy, as production runs them
+python manage.py generate_oidc_key                    # a value for OIDC_RSA_PRIVATE_KEY
+python manage.py provision_organisation "Name" owner@example.com --operator you@example.com
+```

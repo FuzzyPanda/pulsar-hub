@@ -14,6 +14,7 @@ from tests.isolation.routes import API_ROUTES, NON_ORGANISATION_PREFIXES, ORG_RO
 pytestmark = [pytest.mark.isolation, pytest.mark.django_db]
 
 ROLES = ["owner", "admin", "manager", "staff"]
+OPERATOR_OBJECT_ROUTES = ["operator_open_access", "operator_invite_owner", "operator_set_status", "operator_delete"]
 
 
 def all_routes(resolver=None, prefix=""):
@@ -254,11 +255,22 @@ def test_operator_console_is_hidden_from_everyone_else(client, world_a):
         assert (
             client.post("/operator/organisations/", {"name": "X", "owner_email": "x@example.test"}).status_code == 404
         )
-        for name in ("operator_open_access", "operator_set_status", "operator_delete"):
+        for name in OPERATOR_OBJECT_ROUTES:
             url = reverse(name, kwargs={"org_ref": world_a.organisation.pk})
             assert client.post(url, {"reason": "because", "action": "suspend"}).status_code == 404
     world_a.organisation.refresh_from_db()
     assert world_a.organisation.is_active
+
+
+def test_every_operator_route_is_operator_only():
+    """The table above cannot fall behind urls.py, and each view carries the operator check."""
+    resolver = get_resolver()
+    names = {name for pattern, name in all_routes() if pattern.startswith("operator/")}
+    assert names == {"operator_home", "operator_provision", *OPERATOR_OBJECT_ROUTES}
+    for pattern, name in all_routes():
+        if pattern.startswith("operator/"):
+            kwargs = {"org_ref": "00000000-0000-0000-0000-000000000000"} if "org_ref" in pattern else {}
+            assert getattr(resolver.resolve(reverse(name, kwargs=kwargs)).func, "operator_only", False), name
 
 
 def test_operator_console_shows_names_and_status_only(client, world_a, world_b, operator):

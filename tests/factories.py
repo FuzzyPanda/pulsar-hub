@@ -136,3 +136,21 @@ def sign_in(client, user, *, mfa: bool = False, sso: tuple[str, str] | None = No
     session["account_authentication_methods"] = records
     session["account_authentication_methods_user"] = str(user.pk)
     session.save()
+
+
+def issue_access_token(user, organisation, raw: str, *, expires_in: int = 600, scope: str = "openid profile email"):
+    """An access token as the validator stores one (a digest, never the token itself)."""
+    from oauth2_provider.models import set_token_value
+
+    from hub.accounts.models import AccessToken
+
+    token = AccessToken(
+        user=user,
+        organisation=organisation,
+        application=ApplicationFactory(),
+        expires=timezone.now() + timezone.timedelta(seconds=expires_in),
+        scope=scope,
+    )
+    set_token_value(token, raw)
+    token.save()
+    return token

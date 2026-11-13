@@ -16,6 +16,14 @@
               {% if org.status == "active" %}<span class="badge badge-ok">Active</span>
               {% elif org.status == "suspended" %}<span class="badge badge-warn">Suspended</span>
               {% else %}<span class="badge badge-bad">{{ org.get_status_display }}</span>{% endif %}
+              {% if org.awaiting_owner and org.status == "active" %}
+                <span class="badge badge-warn">No owner yet</span>
+                <form class="inline-form" method="post" action="{% url 'operator_invite_owner' org_ref=org.id %}">
+                  {% csrf_token %}
+                  <div class="field"><label class="visually-hidden" for="owner-{{ org.id }}">Owner email address for {{ org.name }}</label><input id="owner-{{ org.id }}" type="email" name="owner_email" placeholder="Owner email address" required></div>
+                  <button class="btn btn-secondary btn-sm" type="submit">Send owner invitation</button>
+                </form>
+              {% endif %}
             </td>
             <td>
               <form class="inline-form" method="post" action="{% url 'operator_open_access' org_ref=org.id %}">

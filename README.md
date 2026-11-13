@@ -1,6 +1,8 @@
 # Pulsar Hub
 
-**Status: planning. No code yet.** Working name; the product name is an open decision.
+**Status: phases H0 and H1 are built** (a running, tested service with organisations, sign-in, MFA
+and sign-in for other products). H2 onward is planned, not started. Working name; the product name
+is an open decision.
 
 Pulsar Hub is the hosted service that joins a client's Pulsar products around one record, the staff
 member. A client business signs in once and manages its people, sites and door access from
@@ -16,6 +18,17 @@ anywhere, across every site. It needs no server of its own.
 
 A client can take access control without rostering, or rostering without access control. That is
 why the hub is its own service and not a feature of either product.
+
+## Run it
+
+```bash
+cp .env.example .env        # then fill in the values marked change-me
+docker compose up --build   # web, worker, Postgres, Caddy on http://localhost
+docker compose exec web python manage.py create_operator you@example.com
+```
+
+Sign in at `/operator/`, set up two-step sign-in, and create the first organisation. Day-to-day
+commands for development are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Read next
 

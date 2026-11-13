@@ -206,6 +206,29 @@ def provision_organisation(*, name: str, owner_email: str, operator, slug: str =
     return organisation, invitation, token
 
 
+def organisations_without_owner() -> set:
+    """Ids of organisations that have no active Owner yet (the first invitation is still out)."""
+    # unscoped: operator console; reads which organisations have an owner, nothing about who
+    with_owner = Membership.all_organisations.filter(role=Role.OWNER, is_active=True).values("organisation_id")
+    return set(Organisation.objects.exclude(pk__in=with_owner).values_list("pk", flat=True))
+
+
+@transaction.atomic
+def invite_first_owner(organisation: Organisation, *, owner_email: str, operator, request=None):
+    """Send the Owner invitation again, or to a corrected address.
+
+    Only while the organisation has no Owner. Once it has one, Pulsar staff cannot create Owners:
+    that belongs to the organisation.
+    """
+    _require_operator(operator)
+    if organisation.pk not in organisations_without_owner():
+        raise PermissionDenied("This organisation already has an Owner; they manage its people.")
+    with organisation_context(organisation):
+        return _create_invitation(
+            email=owner_email, role=Role.OWNER, invited_by=operator, request=request, actor_kind="operator"
+        )
+
+
 @transaction.atomic
 def suspend_organisation(organisation: Organisation, *, operator, reason: str, request=None) -> None:
     """Stop members using an organisation without removing anything. Gateways are not affected:
@@ -425,12 +448,20 @@ def _create_invitation(*, email: str, role: Role, invited_by, request, actor_kin
         "expires_at": invitation.expires_at,
         "product_name": settings.PRODUCT_NAME,
     }
-    send_mail(
-        subject=f"[{settings.PRODUCT_NAME}] You have been invited to {organisation.name}",
-        message=render_to_string("organisations/email/invitation.txt", context),
-        from_email=None,
-        recipient_list=[email],
-    )
+    # A mail outage must not undo the invitation or fail the request. The link cannot be queued
+    # for a retry either: that would mean storing the token. So the caller is told, and sending
+    # again is just inviting again, which replaces this link.
+    try:
+        send_mail(
+            subject=f"[{settings.PRODUCT_NAME}] You have been invited to {organisation.name}",
+            message=render_to_string("organisations/email/invitation.txt", context),
+            from_email=None,
+            recipient_list=[email],
+        )
+        invitation.email_sent = True
+    except Exception:
+        logger.exception("invitation email could not be sent", extra={"invitation_id": str(invitation.pk)})
+        invitation.email_sent = False
     return invitation, token
 
 

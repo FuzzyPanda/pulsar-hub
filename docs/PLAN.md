@@ -1,6 +1,6 @@
 # Plan
 
-**Drafted 2026-11-13. Proposed; nothing is built.** Tick items as they land.
+**Drafted 2026-11-13.** H0 and H1 are built (2026-11-13); H2 onward is not started. Tick items as they land.
 
 ## Phases at a glance
 
@@ -19,41 +19,48 @@ H0 to H2 need nothing from PAC. H1 is the largest piece.
 
 ## H0 — Scaffold
 
-- [ ] Django project `hub/` with apps `organisations`, `accounts`, `directory`, `gateways`,
+- [x] Django project `hub/` with apps `organisations`, `accounts`, `directory`, `gateways`,
   `access`, `audit`, `api`.
-- [ ] Settings from the environment; `.env.example`; no secret in the image.
-- [ ] Docker Compose: web, worker (`qcluster`), Postgres, Caddy. Non-root containers, health
+- [x] Settings from the environment; `.env.example`; no secret in the image.
+- [x] Docker Compose: web, worker (`qcluster`), Postgres, Caddy. Non-root containers, health
   checks, migrate-before-traffic entrypoint.
-- [ ] CI on every pull request: `ruff`, `pytest`, `makemigrations --check`, secret scan.
-- [ ] Structured JSON logs; error monitoring hook.
+- [x] CI on every pull request: `ruff`, `pytest`, `makemigrations --check`, secret scan.
+  Written, and every step passes locally. **It has not run on GitHub yet**: the repository did not
+  exist when H0 was built. Confirm the first run, then make "Organisation isolation suite" a
+  required check on `main`.
+- [x] Structured JSON logs; error monitoring hook.
 
 ## H1 — Identity and organisations
 
 **Organisations**
 
-- [ ] `Organisation`, `Membership` (user, organisation, role). One login can belong to several
+- [x] `Organisation`, `Membership` (user, organisation, role). One login can belong to several
   organisations; casual staff often work for two employers.
-- [ ] Roles: Owner, Admin, Manager, Staff. A separate platform-operator role for Pulsar, whose
+- [x] Roles: Owner, Admin, Manager, Staff. A separate platform-operator role for Pulsar, whose
   access to an organisation is time-limited and audited.
-- [ ] Organisation-scoped model manager and middleware; raw unscoped access is a lint failure.
-- [ ] Isolation test suite covering every route and API. Gates CI from the first model onward.
-- [ ] Provision, suspend, export and delete an organisation.
+- [x] Organisation-scoped model manager and middleware; raw unscoped access is a lint failure.
+- [x] Isolation test suite covering every route and API. Gates CI from the first model onward.
+- [x] Provision, suspend, export and delete an organisation.
 
 **Login and MFA**
 
-- [ ] Email login with verified email, password policy, rate limiting, session list and
+- [x] Email login with verified email, password policy, rate limiting, session list and
   revocation, invite links.
-- [ ] MFA: authenticator app, passkeys, recovery codes. Required for Owner, Admin and Manager;
+- [x] MFA: authenticator app, passkeys, recovery codes. Required for Owner, Admin and Manager;
   per-organisation setting for Staff.
 - [ ] Sign in with Microsoft Entra and Google, configured per organisation. A disabled account in
   the client's directory can no longer sign in.
-- [ ] Step-up: a fresh MFA check on demand, used later by H6.
+  **Built, and tested against simulated provider responses; not yet run against a real tenant.**
+  It needs Pulsar's Microsoft and Google application registrations (`MICROSOFT_CLIENT_ID`,
+  `GOOGLE_CLIENT_ID`) and one live sign-in with each before this box is ticked. How it works is in
+  `CONTRACTS.md`, "Sign-in".
+- [x] Step-up: a fresh MFA check on demand, used later by H6.
 
 **Hub as the sign-in for other products**
 
-- [ ] OIDC provider with PKCE for the Pulsar app and for TIM2.
-- [ ] Token claims carry the user, the organisation and the role, nothing sensitive.
-- [ ] Audit log: sign-in, MFA changes, role changes, operator access.
+- [x] OIDC provider with PKCE for the Pulsar app and for TIM2.
+- [x] Token claims carry the user, the organisation and the role, nothing sensitive.
+- [x] Audit log: sign-in, MFA changes, role changes, operator access.
 
 ## H2 — Directory
 

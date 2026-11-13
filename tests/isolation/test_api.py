@@ -2,7 +2,6 @@
 
 import pytest
 from django.urls import reverse
-from django.utils import timezone
 
 from hub.accounts.models import AccessToken
 from hub.organisations.context import current_organisation, organisation_context
@@ -16,15 +15,9 @@ ROLES = ["owner", "admin", "manager", "staff"]
 
 
 def token_for(world, role, *, expires_in=600) -> dict:
-    token = AccessToken.objects.create(
-        user=world.user(role),
-        organisation=world.organisation,
-        application=f.ApplicationFactory(),
-        token=f"tok-{world.marker}-{role}",
-        expires=timezone.now() + timezone.timedelta(seconds=expires_in),
-        scope="openid profile email",
-    )
-    return {"HTTP_AUTHORIZATION": f"Bearer {token.token}"}
+    raw = f"tok-{world.marker}-{role}"
+    f.issue_access_token(world.user(role), world.organisation, raw, expires_in=expires_in)
+    return {"HTTP_AUTHORIZATION": f"Bearer {raw}"}
 
 
 @pytest.mark.parametrize("name", API_ROUTES)

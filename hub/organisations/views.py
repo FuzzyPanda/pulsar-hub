@@ -163,7 +163,7 @@ def member_list(request, org_slug: str):
 @role_required(Role.ADMIN)
 def invitation_create(request, org_slug: str):
     try:
-        services.invite_member(
+        invitation, _token = services.invite_member(
             actor=Actor.from_request(request),
             email=request.POST.get("email", ""),
             role=request.POST.get("role", Role.STAFF),
@@ -172,7 +172,10 @@ def invitation_create(request, org_slug: str):
     except (ValidationError, PermissionDenied, ValueError) as exc:
         _flash_errors(request, exc)
     else:
-        messages.success(request, "Invitation sent.")
+        if invitation.email_sent:
+            messages.success(request, "Invitation sent.")
+        else:
+            messages.error(request, "The invitation email could not be sent. Invite the person again in a few minutes.")
     return redirect("member_list", org_slug=org_slug)
 
 
@@ -347,8 +350,30 @@ def operator_required(view):
 @require_GET
 def operator_home(request):
     """The list of organisations: name, address and status only. No organisation's data."""
-    organisations = Organisation.objects.order_by("name")
+    organisations = list(Organisation.objects.order_by("name"))
+    ownerless = services.organisations_without_owner()
+    for organisation in organisations:
+        organisation.awaiting_owner = organisation.pk in ownerless
     return render(request, "organisations/operator_home.html", {"organisations": organisations})
+
+
+@operator_required
+@require_POST
+@step_up_required
+def operator_invite_owner(request, org_ref):
+    organisation = get_object_or_404(Organisation, pk=org_ref)
+    try:
+        invitation, _token = services.invite_first_owner(
+            organisation, owner_email=request.POST.get("owner_email", ""), operator=request.user, request=request
+        )
+    except (ValidationError, PermissionDenied) as exc:
+        _flash_errors(request, exc)
+    else:
+        if invitation.email_sent:
+            messages.success(request, f"Owner invitation for {organisation.name} sent.")
+        else:
+            messages.error(request, "The invitation email could not be sent. Check the mail settings and try again.")
+    return redirect("operator_home")
 
 
 @operator_required
@@ -356,7 +381,7 @@ def operator_home(request):
 @step_up_required
 def operator_provision(request):
     try:
-        organisation, _invitation, _token = services.provision_organisation(
+        organisation, invitation, _token = services.provision_organisation(
             name=request.POST.get("name", ""),
             owner_email=request.POST.get("owner_email", ""),
             operator=request.user,
@@ -365,7 +390,14 @@ def operator_provision(request):
     except (ValidationError, PermissionDenied) as exc:
         _flash_errors(request, exc)
     else:
-        messages.success(request, f"{organisation.name} created. The owner has been sent an invitation.")
+        if invitation.email_sent:
+            messages.success(request, f"{organisation.name} created. The owner has been sent an invitation.")
+        else:
+            messages.error(
+                request,
+                f"{organisation.name} created, but the owner's invitation email could not be sent. "
+                "Send it again from the list below.",
+            )
     return redirect("operator_home")
 
 

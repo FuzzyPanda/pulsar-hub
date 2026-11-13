@@ -33,6 +33,7 @@ operator_patterns = [
     path("", views.operator_home, name="operator_home"),
     path("organisations/", views.operator_provision, name="operator_provision"),
     path("organisations/<uuid:org_ref>/access/", views.operator_open_access, name="operator_open_access"),
+    path("organisations/<uuid:org_ref>/owner/", views.operator_invite_owner, name="operator_invite_owner"),
     path("organisations/<uuid:org_ref>/status/", views.operator_set_status, name="operator_set_status"),
     path("organisations/<uuid:org_ref>/delete/", views.operator_delete, name="operator_delete"),
 ]

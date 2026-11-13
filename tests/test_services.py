@@ -152,14 +152,7 @@ def test_role_change_is_audited_and_revokes_tokens(world_a):
 
 
 def _token(world, role):
-    return AccessToken.objects.create(
-        user=world.user(role),
-        organisation=world.organisation,
-        application=f.ApplicationFactory(),
-        token=f"token-{world.marker}-{role}",
-        expires=timezone.now() + timezone.timedelta(minutes=10),
-        scope="openid",
-    )
+    return f.issue_access_token(world.user(role), world.organisation, f"token-{world.marker}-{role}")
 
 
 def test_nobody_changes_their_own_role(world_a):
@@ -355,3 +348,38 @@ def test_deleting_a_login_keeps_its_audit_trail(world_a):
     world_a.staff.delete()
     event = AuditEvent.all_organisations.get(pk=event.pk)
     assert event.actor is None and event.actor_label == world_a.staff.email
+
+
+# --- mail outages and the first owner -------------------------------------------------------------
+
+
+def test_a_mail_outage_does_not_undo_the_invitation(operator, settings):
+    settings.EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    settings.EMAIL_HOST, settings.EMAIL_PORT = "127.0.0.1", 9  # nothing listens here
+    organisation, invitation, token = services.provision_organisation(
+        name="Harbour Dental", owner_email="owner@harbour.test", operator=operator
+    )
+    assert invitation.email_sent is False
+    assert Organisation.objects.filter(pk=organisation.pk).exists()
+    assert services.find_pending_invitation(token) is not None
+
+
+def test_operator_can_resend_the_owner_invitation_until_there_is_an_owner(operator):
+    organisation, _invitation, first_token = services.provision_organisation(
+        name="Harbour Dental", owner_email="typo@harbour.test", operator=operator
+    )
+    assert organisation.pk in services.organisations_without_owner()
+    _invitation, token = services.invite_first_owner(organisation, owner_email="owner@harbour.test", operator=operator)
+    assert services.find_pending_invitation(first_token) is not None  # a different address: both stand
+    services.accept_invitation(services.find_pending_invitation(token), user=f.UserFactory(email="owner@harbour.test"))
+
+    assert organisation.pk not in services.organisations_without_owner()
+    with pytest.raises(PermissionDenied):
+        services.invite_first_owner(organisation, owner_email="second@harbour.test", operator=operator)
+
+
+def test_only_an_operator_can_send_the_first_owner_invitation(world_a, operator):
+    with pytest.raises(PermissionDenied):
+        services.invite_first_owner(world_a.organisation, owner_email="x@example.test", operator=world_a.owner)
+    with pytest.raises(PermissionDenied):  # world_a has an owner
+        services.invite_first_owner(world_a.organisation, owner_email="x@example.test", operator=operator)

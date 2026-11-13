@@ -116,6 +116,9 @@ def test_full_flow_issues_tokens_bound_to_the_organisation(client, app, world_a)
     refresh = RefreshToken.objects.get()
     assert access.organisation == refresh.organisation == world_a.organisation
     assert not Grant.objects.exists()  # the code is single use
+    # Tokens are stored as digests: a database read does not yield a usable token.
+    assert access.token == "" and refresh.token == ""
+    assert tokens["access_token"] not in str(AccessToken.objects.values()) + str(RefreshToken.objects.values())
 
     me = client.get("/api/v1/me", **bearer(tokens))
     assert me.status_code == 200
@@ -217,7 +220,8 @@ def test_refresh_keeps_the_organisation_and_rotates(client, app, world_a):
     assert refreshed.status_code == 200, refreshed.content
     new = refreshed.json()
     assert new["refresh_token"] != tokens["refresh_token"]
-    assert AccessToken.objects.get(token=new["access_token"]).organisation == world_a.organisation
+    checksum = hashlib.sha256(new["access_token"].encode()).hexdigest()
+    assert AccessToken.objects.get(token_checksum=checksum).organisation == world_a.organisation
     assert id_claims(client, app, new)["org_ref"] == str(world_a.organisation.pk)
     # The old refresh token is dead, and replaying it kills the family.
     replay = client.post(

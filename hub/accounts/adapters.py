@@ -1,10 +1,13 @@
 """How the hub bends django-allauth: accounts exist only by invitation, MFA cannot be dropped
 while a role needs it, and a Microsoft or Google sign-in is tied to the directory it came from."""
 
+from urllib.parse import urlparse
+
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.mfa.adapter import DefaultMFAAdapter
 from allauth.mfa.models import Authenticator
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 
@@ -37,6 +40,11 @@ class AccountAdapter(DefaultAccountAdapter):
 
 
 class MFAAdapter(DefaultMFAAdapter):
+    def get_public_key_credential_rp_entity(self) -> dict[str, str]:
+        """What a passkey is bound to: the hub's own host name, and the product name the browser
+        shows when it asks. Taken from HUB_BASE_URL, never from the request's Host header."""
+        return {"id": urlparse(settings.HUB_BASE_URL).hostname, "name": settings.PRODUCT_NAME}
+
     def can_delete_authenticator(self, authenticator: Authenticator) -> bool:
         """The last second factor cannot be removed while any of the user's roles requires MFA."""
         if authenticator.type not in SECOND_FACTORS:
