@@ -241,7 +241,11 @@ by the next.
   bank details, dates of birth, licence numbers, phone numbers or home addresses (rule 11).
 - A snapshot with no active people while the hub holds active people is refused (`409`) unless
   `allow_empty` is true: it would remove everyone's access at every door.
-- `403` if the organisation's directory source is the hub. `200` with counts of what changed.
+- `403` if the organisation's directory source is the hub, and also if the token lacks the scope.
+  `200` with counts of what changed.
+- `work_email` may be `null` or left out. `is_active` on a site and `allow_empty` are optional.
+- Every refusal is `{"detail": "<one sentence>"}`. There is no machine-readable code yet, so a
+  caller cannot tell the two `403` cases apart; treat both as "needs a person".
 
 `GET /api/v1/events?after=<cursor>&limit=200&type=attendance` returns events with a cursor greater
 than `after`, oldest first:
@@ -256,6 +260,9 @@ than `after`, oldest first:
 Start with `after=0`. Store `next_cursor` once the batch is processed and send it next time.
 `type` is a prefix filter (`attendance` matches both clock types). `id` is stable, so processing a
 batch twice must be harmless on the reader's side too. Poll about once a minute.
+Cursors only mean something for the organisation the token belongs to: a reader that is given a
+token for a different organisation starts again from `0`. A new type under a prefix the reader
+asked for will arrive without notice; skip what you do not know.
 
 Sign-in to Rostering through the hub is not built: Rostering has its own logins and organisations
 today, and whether the two merge is an open decision (D8).
