@@ -1,13 +1,10 @@
 from django.urls import include, path
 
+from hub.access.urls import org_patterns as access_patterns
+from hub.directory.urls import org_patterns as directory_patterns
+from hub.gateways.urls import org_patterns as gateway_patterns
 from hub.organisations import views
-from hub.organisations.middleware import organisation_view
-
-
-def org_path(route: str, view, name: str):
-    """A route under `/org/<org_slug>/`. Use this, never `path`, for organisation routes."""
-    return path(route, organisation_view(view), name=name)
-
+from hub.organisations.routing import org_path
 
 org_patterns = [
     org_path("", views.org_home, name="org_home"),
@@ -27,6 +24,14 @@ org_patterns = [
     org_path("settings/export/", views.org_export, name="org_export"),
     org_path("audit/", views.audit_list, name="audit_list"),
     org_path("operator-access/<uuid:access_id>/end/", views.operator_access_end, name="operator_access_end"),
+    org_path("settings/directory-source/", views.directory_source, name="directory_source"),
+    org_path("settings/service-tokens/", views.service_token_create, name="service_token_create"),
+    org_path(
+        "settings/service-tokens/<uuid:token_id>/revoke/", views.service_token_revoke, name="service_token_revoke"
+    ),
+    *directory_patterns,
+    *access_patterns,
+    *gateway_patterns,
 ]
 
 operator_patterns = [

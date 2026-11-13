@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ site.name }}{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ site.name }}{% if not site.is_active %} <span class="badge">Inactive</span>{% endif %}</h1>
+    <a class="btn btn-link" href="{% url 'site_list' org_slug=organisation.slug %}">All sites</a>
+  </div>
+  <p class="muted">{% if site.address %}{{ site.address }}. {% endif %}Time zone: {{ site.timezone }}.</p>
+
+  {% if new_pairing_code %}
+    <section class="card" aria-labelledby="pairing-heading">
+      <h2 id="pairing-heading">Pairing code</h2>
+      <p class="pairing-code mono">{{ new_pairing_code.code }}</p>
+      <p>Enter this on the gateway. It works once and expires at {{ new_pairing_code.expires_at|date:"H:i" }} UTC. It will not be shown again.</p>
+    </section>
+  {% endif %}
+
+  <section class="card" aria-labelledby="status-heading">
+    <h2 id="status-heading">Status</h2>
+    {% if sync.state == "in_sync" %}
+      <p><span class="badge badge-ok">In sync</span></p>
+      <p>This site has applied the current access.{% if sync.applied_at %} Applied {{ sync.applied_at|date:"j M Y, H:i" }} UTC.{% endif %}</p>
+    {% elif sync.state == "unconfirmed" %}
+      <p><span class="badge badge-warn">Waiting</span></p>
+      <p>Waiting for the gateway to confirm the latest changes.</p>
+    {% elif sync.state == "out_of_contact" %}
+      <p><span class="badge badge-bad">Out of contact</span></p>
+      <p>The gateway has not called in since {% if sync.last_seen_at %}{{ sync.last_seen_at|date:"j M Y, H:i" }} UTC{% else %}it was paired{% endif %}. Doors keep working from the last access it received.</p>
+    {% elif sync.state == "failures" %}
+      <p><span class="badge badge-warn">Applied with problems</span></p>
+      <p>The gateway applied the current access, but could not give these people what they should have.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Person</th><th>Reason</th></tr></thead>
+          <tbody>
+            {% for failure in sync.failures %}
+              <tr><td class="mono">{{ failure.person_ref }}</td><td>{{ failure.reason }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% elif sync.state == "unpaired" %}
+      <p><span class="badge badge-warn">No gateway paired</span></p>
+      <p>No gateway is paired with this site.</p>
+    {% else %}
+      <p><span class="badge">Doors managed elsewhere</span></p>
+      <p>Another system manages this site's doors, so the hub's access features are off here.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="gateway-heading">
+    <h2 id="gateway-heading">Gateway</h2>
+    {% if gateway %}
+      <ul class="list">
+        <li><span>Name</span><span>{% if gateway.name %}{{ gateway.name }}{% else %}<span class="muted">Not named</span>{% endif %}</span></li>
+        <li><span>Software version</span><span>{% if gateway.software_version %}{{ gateway.software_version }}{% else %}<span class="muted">Not reported</span>{% endif %}</span></li>
+        <li><span>Paired</span><span>{{ gateway.paired_at|date:"j M Y, H:i" }} UTC</span></li>
+        <li><span>Last seen</span><span>{% if gateway.last_seen_at %}{{ gateway.last_seen_at|date:"j M Y, H:i" }} UTC{% else %}<span class="muted">Not yet</span>{% endif %}</span></li>
+        {% if health %}
+          <li>
+            <span>Health</span>
+            <span>
+              {{ health.status|default:"Unknown" }}{% if health.detail %}. {{ health.detail }}{% endif %}
+              {% if health.queued_events %} <span class="muted">({{ health.queued_events }} events queued on the gateway)</span>{% endif %}
+            </span>
+          </li>
+        {% endif %}
+      </ul>
+      {% if can_edit %}
+        <form method="post" action="{% url 'gateway_revoke' org_slug=organisation.slug gateway_id=gateway.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="gateway_id" value="{{ gateway.id }}">
+          <div class="actions"><button class="btn btn-danger-quiet" type="submit">Revoke gateway</button></div>
+        </form>
+        <hr>
+        <h3>Pair a replacement</h3>
+        <p class="muted">Pairing a new gateway revokes this one. Make a code, then enter it on the new gateway.</p>
+        <form method="post" action="{% url 'gateway_pairing_code' org_slug=organisation.slug site_id=site.id %}">
+          {% csrf_token %}
+          <button class="btn btn-secondary" type="submit">Create a pairing code</button>
+        </form>
+      {% endif %}
+    {% else %}
+      <p class="empty">No gateway is paired with this site.</p>
+      {% if can_edit and not site.access_managed_elsewhere %}
+        <p class="muted">Make a code, then enter it on the gateway. The code works once and expires soon after.</p>
+        <form method="post" action="{% url 'gateway_pairing_code' org_slug=organisation.slug site_id=site.id %}">
+          {% csrf_token %}
+          <button class="btn" type="submit">Create a pairing code</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="onsite-heading">
+    <h2 id="onsite-heading">On site now</h2>
+    {% if on_site %}
+      <ul class="list">
+        {% for entry in on_site %}
+          <li>
+            <a href="{% url 'person_detail' org_slug=organisation.slug person_id=entry.person.id %}">{{ entry.person.name }}</a>
+            <span class="muted small">Since {{ entry.since|date:"j M Y, H:i" }} UTC{% if entry.door %}, via {{ entry.door }}{% endif %}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">No one is clocked in at this site.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="doors-heading">
+    <h2 id="doors-heading">Doors</h2>
+    {% if doors %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>State</th><th>Mode</th></tr></thead>
+          <tbody>
+            {% for door in doors %}
+              <tr><td>{% if door.name %}{{ door.name }}{% else %}<span class="mono">{{ door.door_ref }}</span>{% endif %}</td><td>{{ door.state }}</td><td>{{ door.mode }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="empty">The gateway has not reported its doors yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="groups-heading">
+    <h2 id="groups-heading">Access groups at this site</h2>
+    {% if groups %}
+      <ul class="list">
+        {% for group in groups %}
+          <li><a href="{% url 'group_detail' org_slug=organisation.slug group_id=group.id %}">{{ group.name }}</a></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">No access group includes this site.</p>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="events-heading">
+    <div class="page-head">
+      <h2 id="events-heading">Recent events</h2>
+      <a href="{% url 'event_list' org_slug=organisation.slug %}?site={{ site.id }}">All events at this site</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>What</th><th>Who</th><th>Door</th></tr></thead>
+        <tbody>
+          {% for event in recent_events %}
+            <tr>
+              <td class="nowrap">{{ event.occurred_at|date:"j M Y, H:i" }} UTC</td>
+              <td>{% include "gateways/_event_label.html" %}</td>
+              <td>{% if event.person %}<a href="{% url 'person_detail' org_slug=organisation.slug person_id=event.person.id %}">{{ event.person.name }}</a>{% else %}<span class="muted">None</span>{% endif %}</td>
+              <td>{% if event.data.door %}{{ event.data.door }}{% else %}<span class="muted">None</span>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="empty">No events yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if can_edit %}
+    {% if hub_owned %}
+      <section class="card" aria-labelledby="edit-heading">
+        <h2 id="edit-heading">Site details</h2>
+        <form method="post" action="{% url 'site_update' org_slug=organisation.slug site_id=site.id %}">
+          {% csrf_token %}
+          <div class="form-grid">
+            <div class="field"><label for="site-name">Name</label><input id="site-name" type="text" name="name" value="{{ site.name }}" maxlength="200" required></div>
+            <div class="field"><label for="site-address">Address</label><input id="site-address" type="text" name="address" value="{{ site.address }}" maxlength="300" autocomplete="off"></div>
+            <div class="field"><label for="site-timezone">Time zone</label><input id="site-timezone" type="text" name="timezone" value="{{ site.timezone }}" maxlength="64" required></div>
+          </div>
+          <div class="actions"><button class="btn" type="submit">Save site details</button></div>
+        </form>
+      </section>
+    {% endif %}
+    <section class="card" aria-labelledby="mode-heading">
+      <h2 id="mode-heading">Who manages the doors</h2>
+      <form method="post" action="{% url 'site_access_mode' org_slug=organisation.slug site_id=site.id %}">
+        {% csrf_token %}
+        <div class="check">
+          <input id="site-elsewhere" type="checkbox" name="elsewhere"{% if site.access_managed_elsewhere %} checked{% endif %}>
+          <label for="site-elsewhere">Doors managed by another system. The hub then sends this site no access. Use this where another product, such as PerfectGym, handles who enters.</label>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Save</button></div>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

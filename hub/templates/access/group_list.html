@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Access groups{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Access groups</h1></div>
+  <p class="lede">Everyone in a group can enter every site in the group. What the group means at each door is set on that site's gateway.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Description</th><th>People</th><th>Sites</th></tr></thead>
+      <tbody>
+        {% for group in groups %}
+          <tr>
+            <td><a href="{% url 'group_detail' org_slug=organisation.slug group_id=group.id %}">{{ group.name }}</a></td>
+            <td>{% if group.description %}{{ group.description }}{% else %}<span class="muted">None</span>{% endif %}</td>
+            <td>{{ group.people_count }}</td>
+            <td>{{ group.site_count }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="empty">There are no access groups yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if can_edit %}
+    <section class="card">
+      <h2>Add an access group</h2>
+      <form method="post" action="{% url 'group_create' org_slug=organisation.slug %}">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="group-name">Name</label><input id="group-name" type="text" name="name" maxlength="200" required autocomplete="off"></div>
+          <div class="field"><label for="group-description">Description</label><input id="group-description" type="text" name="description" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Add access group</button></div>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

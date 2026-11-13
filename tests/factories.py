@@ -154,3 +154,88 @@ def issue_access_token(user, organisation, raw: str, *, expires_in: int = 600, s
     set_token_value(token, raw)
     token.save()
     return token
+
+
+# --- directory, access groups, gateways (H2 and H3) ----------------------------------------------
+
+from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupSite  # noqa: E402
+from hub.api.models import Scope, ServiceToken  # noqa: E402
+from hub.directory.models import Person, Site  # noqa: E402
+from hub.gateways.models import Gateway, GatewayEvent, PairingCode  # noqa: E402
+
+
+class SiteFactory(ScopedFactory):
+    class Meta:
+        model = Site
+
+    name = factory.Sequence(lambda n: f"Site {n}")
+    address = "1 High Street"
+
+
+class PersonFactory(ScopedFactory):
+    class Meta:
+        model = Person
+
+    name = factory.Sequence(lambda n: f"Person {n}")
+    work_email = factory.Sequence(lambda n: f"person{n}@example.test")
+
+
+class AccessGroupFactory(ScopedFactory):
+    class Meta:
+        model = AccessGroup
+
+    name = factory.Sequence(lambda n: f"Group {n}")
+
+
+class AccessGroupMemberFactory(ScopedFactory):
+    class Meta:
+        model = AccessGroupMember
+
+    access_group = factory.SubFactory(AccessGroupFactory, organisation=factory.SelfAttribute("..organisation"))
+    person = factory.SubFactory(PersonFactory, organisation=factory.SelfAttribute("..organisation"))
+
+
+class AccessGroupSiteFactory(ScopedFactory):
+    class Meta:
+        model = AccessGroupSite
+
+    access_group = factory.SubFactory(AccessGroupFactory, organisation=factory.SelfAttribute("..organisation"))
+    site = factory.SubFactory(SiteFactory, organisation=factory.SelfAttribute("..organisation"))
+
+
+class PairingCodeFactory(ScopedFactory):
+    class Meta:
+        model = PairingCode
+
+    site = factory.SubFactory(SiteFactory, organisation=factory.SelfAttribute("..organisation"))
+    code_hash = factory.Sequence(lambda n: hash_token(f"CODE-{n:08d}"))
+    expires_at = factory.LazyFunction(lambda: timezone.now() + timezone.timedelta(minutes=15))
+
+
+class GatewayFactory(ScopedFactory):
+    class Meta:
+        model = Gateway
+
+    site = factory.SubFactory(SiteFactory, organisation=factory.SelfAttribute("..organisation"))
+    name = factory.Sequence(lambda n: f"Gateway {n}")
+    credential_hash = factory.Sequence(lambda n: hash_token(f"hubgw_factory_{n}"))
+    last_seen_at = factory.LazyFunction(timezone.now)
+
+
+class GatewayEventFactory(ScopedFactory):
+    class Meta:
+        model = GatewayEvent
+
+    site = factory.SubFactory(SiteFactory, organisation=factory.SelfAttribute("..organisation"))
+    event_id = factory.LazyFunction(lambda: __import__("uuid").uuid4())
+    type = "attendance.clock_in"
+    occurred_at = factory.LazyFunction(timezone.now)
+
+
+class ServiceTokenFactory(ScopedFactory):
+    class Meta:
+        model = ServiceToken
+
+    name = factory.Sequence(lambda n: f"Service {n}")
+    token_hash = factory.Sequence(lambda n: hash_token(f"hubsvc_factory_{n}"))
+    scopes = factory.LazyFunction(lambda: list(Scope.values))

@@ -26,6 +26,15 @@ FACTORIES = {
     Invitation: f.InvitationFactory,
     IdentityProvider: f.IdentityProviderFactory,
     OperatorAccess: f.OperatorAccessFactory,
+    f.Site: f.SiteFactory,
+    f.Person: f.PersonFactory,
+    f.AccessGroup: f.AccessGroupFactory,
+    f.AccessGroupMember: f.AccessGroupMemberFactory,
+    f.AccessGroupSite: f.AccessGroupSiteFactory,
+    f.PairingCode: f.PairingCodeFactory,
+    f.Gateway: f.GatewayFactory,
+    f.GatewayEvent: f.GatewayEventFactory,
+    f.ServiceToken: f.ServiceTokenFactory,
 }
 
 

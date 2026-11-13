@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Events{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Events</h1></div>
+  <form class="filter" method="get" action="{% url 'event_list' org_slug=organisation.slug %}">
+    <div class="field">
+      <label for="event-site">Site</label>
+      <select id="event-site" name="site">
+        <option value="">All sites</option>
+        {% for s in sites %}<option value="{{ s.id }}"{% if s.id|stringformat:"s" == selected_site %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="event-type">Type</label>
+      <select id="event-type" name="type">
+        {% for value, label in type_choices %}<option value="{{ value }}"{% if value == selected_type %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-secondary" type="submit">Filter</button>
+    {% if selected_site or selected_type %}<a class="btn btn-link" href="{% url 'event_list' org_slug=organisation.slug %}">Clear filter</a>{% endif %}
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>When</th><th>Site</th><th>What</th><th>Who</th><th>Door</th></tr></thead>
+      <tbody>
+        {% for event in page %}
+          <tr>
+            <td class="nowrap">{{ event.occurred_at|date:"j M Y, H:i" }} UTC</td>
+            <td><a href="{% url 'site_detail' org_slug=organisation.slug site_id=event.site.id %}">{{ event.site.name }}</a></td>
+            <td>{% include "gateways/_event_label.html" %}</td>
+            <td>{% if event.person %}<a href="{% url 'person_detail' org_slug=organisation.slug person_id=event.person.id %}">{{ event.person.name }}</a>{% else %}<span class="muted">None</span>{% endif %}</td>
+            <td>{% if event.data.door %}{{ event.data.door }}{% else %}<span class="muted">None</span>{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="empty">No events match.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page.paginator.num_pages > 1 %}
+    <nav class="pager" aria-label="Pages">
+      <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+      <span class="cluster">
+        {% if page.has_previous %}<a class="btn btn-secondary btn-sm" href="?{% if selected_site %}site={{ selected_site|urlencode }}&amp;{% endif %}{% if selected_type %}type={{ selected_type|urlencode }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
+        {% if page.has_next %}<a class="btn btn-secondary btn-sm" href="?{% if selected_site %}site={{ selected_site|urlencode }}&amp;{% endif %}{% if selected_type %}type={{ selected_type|urlencode }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
+      </span>
+    </nav>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ group.name }}{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ group.name }}</h1>
+    <a class="btn btn-link" href="{% url 'group_list' org_slug=organisation.slug %}">All access groups</a>
+  </div>
+  {% if group.description %}<p class="muted">{{ group.description }}</p>{% endif %}
+
+  <section class="card" aria-labelledby="members-heading">
+    <h2 id="members-heading">People</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Status</th>{% if can_assign %}<th>Actions</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for member in members %}
+            <tr>
+              <td><a href="{% url 'person_detail' org_slug=organisation.slug person_id=member.person.id %}">{{ member.person.name }}</a></td>
+              <td><span class="badge{% if member.person.status == 'active' %} badge-ok{% endif %}">{{ member.person.get_status_display }}</span></td>
+              {% if can_assign %}
+                <td>
+                  <form method="post" action="{% url 'group_member_remove' org_slug=organisation.slug group_id=group.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="person" value="{{ member.person.id }}">
+                    <button class="btn btn-secondary btn-sm" type="submit">Remove<span class="visually-hidden"> {{ member.person.name }}</span></button>
+                  </form>
+                </td>
+              {% endif %}
+            </tr>
+          {% empty %}
+            <tr><td colspan="3" class="empty">No one is in this group yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if can_assign %}
+      <h3>Add a person</h3>
+      {% if candidates %}
+        <form class="inline-form" method="post" action="{% url 'group_member_add' org_slug=organisation.slug group_id=group.id %}">
+          {% csrf_token %}
+          <div class="field">
+            <label class="visually-hidden" for="add-person">Person to add</label>
+            <select id="add-person" name="person">
+              {% for person in candidates %}<option value="{{ person.id }}">{{ person.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <button class="btn" type="submit">Add person</button>
+        </form>
+      {% else %}
+        <p class="muted">Every active person is already in this group.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="sites-heading">
+    <h2 id="sites-heading">Sites</h2>
+    <p class="muted">Sites where another system manages the doors, and inactive sites, are not listed.</p>
+    {% if can_edit %}
+      <form method="post" action="{% url 'group_sites' org_slug=organisation.slug group_id=group.id %}">
+        {% csrf_token %}
+        <fieldset>
+          <legend class="visually-hidden">Sites this group opens</legend>
+          {% for row in site_rows %}
+            <div class="check">
+              <input id="site-{{ row.site.id }}" type="checkbox" name="sites" value="{{ row.site.id }}"{% if row.included %} checked{% endif %}>
+              <label for="site-{{ row.site.id }}">{{ row.site.name }}</label>
+            </div>
+          {% empty %}
+            <p class="empty">There are no sites this group could open.</p>
+          {% endfor %}
+        </fieldset>
+        <p class="hint">Saving asks for two-step sign-in, because it can open doors.</p>
+        <div class="actions"><button class="btn" type="submit">Save sites</button></div>
+      </form>
+    {% else %}
+      <ul class="list">
+        {% for row in site_rows %}{% if row.included %}
+          <li><a href="{% url 'site_detail' org_slug=organisation.slug site_id=row.site.id %}">{{ row.site.name }}</a></li>
+        {% endif %}{% empty %}
+          <li class="empty">No sites.</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  {% if can_edit %}
+    <section class="card" aria-labelledby="rename-heading">
+      <h2 id="rename-heading">Name and description</h2>
+      <p class="alert alert-warning">Gateways match groups by name. After renaming, the group grants nothing at a site until someone maps the new name on that site's gateway.</p>
+      <form method="post" action="{% url 'group_update' org_slug=organisation.slug group_id=group.id %}">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="group-name">Name</label><input id="group-name" type="text" name="name" value="{{ group.name }}" maxlength="200" required></div>
+          <div class="field"><label for="group-description">Description</label><input id="group-description" type="text" name="description" value="{{ group.description }}" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Save name and description</button></div>
+      </form>
+    </section>
+
+    <section class="card card--danger" aria-labelledby="delete-heading">
+      <h2 id="delete-heading">Delete access group</h2>
+      <p>Everyone in the group loses what it gave them at each site, on each gateway's next sync. Deleting asks for two-step sign-in.</p>
+      <form method="post" action="{% url 'group_delete' org_slug=organisation.slug group_id=group.id %}">
+        {% csrf_token %}
+        <button class="btn btn-danger" type="submit">Delete access group</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

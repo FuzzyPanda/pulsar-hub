@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Sites{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Sites</h1></div>
+  {% if not hub_owned %}
+    <p class="lede">Sites for this organisation come from Pulsar Rostering. Change them there.</p>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Address</th><th>Time zone</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td><a href="{% url 'site_detail' org_slug=organisation.slug site_id=row.site.id %}">{{ row.site.name }}</a>{% if not row.site.is_active %} <span class="badge">Inactive</span>{% endif %}</td>
+            <td>{% if row.site.address %}{{ row.site.address }}{% else %}<span class="muted">None</span>{% endif %}</td>
+            <td>{{ row.site.timezone }}</td>
+            <td>
+              {% if row.site.access_managed_elsewhere %}<span class="badge">Doors managed elsewhere</span>
+              {% elif not row.gateway %}<span class="badge badge-warn">No gateway paired</span>
+              {% elif row.gateway.is_in_contact %}<span class="badge badge-ok">In contact</span>
+              {% else %}<span class="badge badge-bad">Out of contact</span>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="empty">There are no sites yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if hub_owned and can_edit %}
+    <section class="card">
+      <h2>Add a site</h2>
+      <form method="post" action="{% url 'site_create' org_slug=organisation.slug %}">
+        {% csrf_token %}
+        <div class="form-grid">
+          <div class="field"><label for="site-name">Name</label><input id="site-name" type="text" name="name" maxlength="200" required></div>
+          <div class="field"><label for="site-address">Address</label><input id="site-address" type="text" name="address" maxlength="300" autocomplete="off"></div>
+          <div class="field">
+            <label for="site-timezone">Time zone</label>
+            <input id="site-timezone" type="text" name="timezone" value="Australia/Melbourne" maxlength="64" required>
+            <p class="hint">A name such as Australia/Sydney.</p>
+          </div>
+        </div>
+        <div class="actions"><button class="btn" type="submit">Add site</button></div>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

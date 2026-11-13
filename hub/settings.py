@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.humanize",
+    "django.contrib.postgres",
     # Third party
     "rest_framework",
     "django_htmx",
@@ -256,6 +257,10 @@ SSO_REFRESH_MAX_AGE_HOURS = env.int("SSO_REFRESH_MAX_AGE_HOURS", default=24)
 # However often a refresh token is used, the app must send the user through sign-in again this
 # long after they last signed in.
 OIDC_SESSION_MAX_DAYS = env.int("OIDC_SESSION_MAX_DAYS", default=90)
+# Gateways (Pulsar Access Control). A pairing code is typed on site within minutes of being made.
+PAIRING_CODE_MINUTES = env.int("PAIRING_CODE_MINUTES", default=15)
+# A gateway polls about once a minute. After this long without a call it is shown as out of contact.
+GATEWAY_OUT_OF_CONTACT_SECONDS = env.int("GATEWAY_OUT_OF_CONTACT_SECONDS", default=300)
 INVITATION_EXPIRY_DAYS = env.int("INVITATION_EXPIRY_DAYS", default=7)
 # How long a Pulsar operator may hold access to an organisation before it must be granted again.
 OPERATOR_ACCESS_MAX_HOURS = env.int("OPERATOR_ACCESS_MAX_HOURS", default=8)
@@ -337,6 +342,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": env("API_THROTTLE_ANON", default="30/min"),
         "user": env("API_THROTTLE_USER", default="600/min"),
+        # Guessing a pairing code: twelve characters from a 31-letter alphabet, valid 15 minutes.
+        "gateway_pair": env("API_THROTTLE_GATEWAY_PAIR", default="10/min"),
     },
     "NUM_PROXIES": NUM_PROXIES,
     "EXCEPTION_HANDLER": "hub.api.exceptions.exception_handler",

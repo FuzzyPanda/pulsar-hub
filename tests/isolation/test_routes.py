@@ -124,9 +124,20 @@ def test_member_of_a_gets_404_from_b(client, world_a, world_b, name, role):
     assert snapshot(world_b.organisation) == before
 
 
-@pytest.mark.parametrize("name", [n for n, r in ORG_ROUTES.items() if r.kwargs(type("W", (), {
-    "memberships": {"staff": type("M", (), {"pk": 1})}, "invitation": type("I", (), {"pk": 1}),
-    "identity_provider": type("P", (), {"pk": 1}), "operator_access": type("O", (), {"pk": 1})})())])  # fmt: skip
+class _AnyWorld:
+    """Stands in for a World when all that is wanted is whether a route takes object ids."""
+
+    def __getattr__(self, name):
+        return _AnyWorld()
+
+    def __getitem__(self, key):
+        return _AnyWorld()
+
+
+ROUTES_WITH_OBJECT_IDS = [name for name, route in ORG_ROUTES.items() if route.kwargs(_AnyWorld())]
+
+
+@pytest.mark.parametrize("name", ROUTES_WITH_OBJECT_IDS)
 def test_owner_of_a_cannot_reach_bs_rows_through_as_address(client, world_a, world_b, name):
     """A's own address, B's object ids: the scoped manager must not find them."""
     route = ORG_ROUTES[name]

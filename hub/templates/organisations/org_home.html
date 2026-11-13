@@ -19,6 +19,13 @@
       </section>
     {% endif %}
   </div>
+  {% if request.operator_access or membership.role == "owner" or membership.role == "admin" or membership.role == "manager" %}
+    <div class="grid">
+      <a class="card" href="{% url 'site_list' org_slug=organisation.slug %}"><h2>Sites</h2><p class="muted">Gateways, doors and who is on site.</p></a>
+      <a class="card" href="{% url 'person_list' org_slug=organisation.slug %}"><h2>People</h2><p class="muted">Staff and contractors, and where they can enter.</p></a>
+      <a class="card" href="{% url 'group_list' org_slug=organisation.slug %}"><h2>Access groups</h2><p class="muted">Who can enter which sites.</p></a>
+    </div>
+  {% endif %}
   {% if can_manage %}
     <section class="card">
       <h2>Pulsar operator visits</h2>

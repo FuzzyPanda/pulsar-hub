@@ -90,6 +90,92 @@
       {% endif %}
     </section>
 
+    <section class="card">
+      <h2>People and sites</h2>
+      <p class="muted">One product owns this organisation's people and sites. Choose Pulsar Rostering only if this organisation rosters there; the hub then takes its people and sites from Rostering and they cannot be edited here.</p>
+      {% if is_owner %}
+        <form method="post" action="{% url 'directory_source' org_slug=organisation.slug %}">
+          {% csrf_token %}
+          <fieldset>
+            <legend class="visually-hidden">Where people and sites come from</legend>
+            {% for value, label in directory_source_choices %}
+              <div class="check">
+                <input id="source-{{ value }}" type="radio" name="source" value="{{ value }}"{% if value == organisation.directory_source %} checked{% endif %}>
+                <label for="source-{{ value }}">{{ label }}</label>
+              </div>
+            {% endfor %}
+          </fieldset>
+          <div class="actions"><button class="btn" type="submit">Save</button></div>
+        </form>
+      {% else %}
+        <ul class="list">
+          <li><span>People and sites come from</span><span class="badge badge-info">{{ organisation.get_directory_source_display }}</span></li>
+        </ul>
+        <p class="hint">Only an Owner can change this.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Connected systems</h2>
+      <p class="muted">Other systems, such as Pulsar Rostering, use a token to read or send this organisation's data. A token belongs to this organisation only.</p>
+      {% if new_service_token %}
+        <div class="alert alert-warning" role="status">
+          <p><strong>Token for {{ new_service_token.name }}</strong></p>
+          <p class="secret-block mono">{{ new_service_token.token }}</p>
+          <p>Copy this token into the other system now. It will not be shown again.</p>
+        </div>
+      {% endif %}
+      {% if service_tokens %}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Can do</th><th>Created</th><th>Last used</th>{% if is_owner %}<th>Actions</th>{% endif %}</tr></thead>
+            <tbody>
+              {% for token in service_tokens %}
+                <tr>
+                  <td>{{ token.name }}</td>
+                  <td>{% for scope in token.scopes %}<span class="badge mono">{{ scope }}</span> {% endfor %}</td>
+                  <td class="nowrap">{{ token.created_at|date:"j M Y, H:i" }} UTC</td>
+                  <td class="nowrap">{% if token.last_used_at %}{{ token.last_used_at|date:"j M Y, H:i" }} UTC{% else %}<span class="muted">Never</span>{% endif %}</td>
+                  {% if is_owner %}
+                    <td>
+                      <form method="post" action="{% url 'service_token_revoke' org_slug=organisation.slug token_id=token.id %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="token_id" value="{{ token.id }}">
+                        <button class="btn btn-danger-quiet btn-sm" type="submit">Revoke token<span class="visually-hidden"> {{ token.name }}</span></button>
+                      </form>
+                    </td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">No systems are connected.</p>
+      {% endif %}
+      {% if is_owner %}
+        <h3>Create a token</h3>
+        <form method="post" action="{% url 'service_token_create' org_slug=organisation.slug %}">
+          {% csrf_token %}
+          <div class="field">
+            <label for="token-name">Name</label>
+            <input id="token-name" type="text" name="name" maxlength="100" required autocomplete="off">
+            <p class="hint">The system this token is for, such as Pulsar Rostering.</p>
+          </div>
+          <fieldset>
+            <legend>What it can do</legend>
+            {% for value, label in scope_choices %}
+              <div class="check">
+                <input id="scope-{{ forloop.counter }}" type="checkbox" name="scopes" value="{{ value }}">
+                <label for="scope-{{ forloop.counter }}">{{ label }}</label>
+              </div>
+            {% endfor %}
+          </fieldset>
+          <div class="actions"><button class="btn" type="submit">Create token</button></div>
+        </form>
+      {% endif %}
+    </section>
+
     {% if is_owner %}
       <section class="card">
         <h2>Export your data</h2>
