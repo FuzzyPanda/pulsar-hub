@@ -5,6 +5,7 @@ Where an organisation's directory comes from Pulsar Rostering (decision D3), onl
 organisation, never both.
 """
 
+import unicodedata
 import uuid
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -26,11 +27,22 @@ def _require_hub_owned() -> Organisation:
     return organisation
 
 
+def plain_text(value, limit: int) -> str:
+    """One line of visible text: control characters and runs of white space become single spaces.
+
+    A gateway refuses a whole access snapshot if any name in it carries a control character or
+    stray white space, and a refused snapshot means no change reaches that site, removals
+    included. So names are made plain when they are stored, and again when they are sent.
+    """
+    text = "".join(" " if (ch.isspace() or unicodedata.category(ch).startswith("C")) else ch for ch in str(value or ""))
+    return " ".join(text.split())[:limit].strip()
+
+
 def _clean_name(name: str, what: str) -> str:
-    name = (name or "").strip()
+    name = plain_text(name, 200)
     if not name:
         raise ValidationError(f"{what} needs a name.")
-    return name[:200]
+    return name
 
 
 # --- sites ----------------------------------------------------------------------------------------

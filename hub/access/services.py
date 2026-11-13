@@ -9,16 +9,17 @@ from django.utils import timezone
 
 from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupSite
 from hub.directory.models import Person, Site
+from hub.directory.services import plain_text
 from hub.organisations.context import require_organisation
 from hub.organisations.models import Role
 from hub.organisations.services import Actor, _audit
 
 
 def _clean_group_name(name: str) -> str:
-    name = " ".join((name or "").split())
+    name = plain_text(name, 100)
     if not name:
         raise ValidationError("An access group needs a name.")
-    return name[:100]
+    return name
 
 
 @transaction.atomic
@@ -128,8 +129,12 @@ def desired_access(site: Site) -> dict:
     converges without replay (rule 4).
     """
     organisation = require_organisation()
-    groups_here = list(AccessGroup.objects.filter(site_links__site=site).order_by("name").values_list("pk", "name"))
-    names = dict(groups_here)
+    # Names are made plain here as well as when stored: one odd character must never be the
+    # reason a gateway refuses the snapshot that would have removed someone's access.
+    names = {
+        pk: plain_text(name, 100) or "(unnamed group)"
+        for pk, name in AccessGroup.objects.filter(site_links__site=site).values_list("pk", "name")
+    }
     people: dict = {}
     memberships = (
         AccessGroupMember.objects.filter(access_group_id__in=names.keys())
@@ -140,16 +145,21 @@ def desired_access(site: Site) -> dict:
         person = membership.person
         entry = people.setdefault(
             person.pk,
-            {"person_ref": str(person.pk), "name": person.name, "active": person.is_active, "access_groups": []},
+            {
+                "person_ref": str(person.pk),
+                "name": plain_text(person.name, 200) or "(no name)",
+                "active": person.is_active,
+                "access_groups": [],
+            },
         )
         entry["access_groups"].append(names[membership.access_group_id])
     people_list = sorted(people.values(), key=lambda p: p["person_ref"])
     for entry in people_list:
-        entry["access_groups"].sort()
+        entry["access_groups"] = sorted(set(entry["access_groups"]))
     body = {
         "org_ref": str(organisation.pk),
         "site_ref": str(site.pk),
-        "access_groups": [name for _pk, name in groups_here],
+        "access_groups": sorted(set(names.values())),
         "people": people_list,
     }
     version = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]

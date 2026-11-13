@@ -657,3 +657,26 @@ def test_ending_someone_needs_no_second_factor_prompt_but_reactivating_does(clie
     )
     assert Person.all_organisations.get(pk=world_a.person.pk).status == "ended"
     assert "access.person_ended" in audit_actions(world_a)
+
+
+def test_names_reach_a_gateway_as_plain_single_line_text(client, world_a):
+    """A gateway refuses a whole snapshot over one control character, and a refused snapshot means
+    no removal reaches the site. So odd names are made plain, both when stored and when sent."""
+    with organisation_context(world_a.organisation):
+        person = directory.create_person(actor=actor(world_a, "manager"), name="  Sam\tLee\n(night​shift)\x00  ")
+        assert person.name == "Sam Lee (night shift)"
+        group = access.create_group(actor=actor(world_a, "admin"), name=" Night\r\nstaff ")
+        assert group.name == "Night staff"
+        # A name that got into the database some other way is still sent plain.
+        Person.objects.filter(pk=world_a.person.pk).update(name="Odd\tName\n")
+        type(group).objects.filter(pk=group.pk).update(name="Odd\tGroup ")
+        access.add_person_to_group(group, world_a.person, actor=actor(world_a, "manager"))
+        access.set_group_sites(group, [world_a.site], actor=actor(world_a, "admin"))
+    snapshot = get_access(client, world_a).json()
+    texts = [p["name"] for p in snapshot["people"]] + snapshot["access_groups"]
+    texts += [g for p in snapshot["people"] for g in p["access_groups"]]
+    assert "Odd Name" in texts and "Odd Group" in texts
+    for text in texts:
+        assert text == text.strip() and text and all(ch.isprintable() for ch in text), repr(text)
+    # Every group a person carries is declared at the top level.
+    assert {g for p in snapshot["people"] for g in p["access_groups"]} <= set(snapshot["access_groups"])
