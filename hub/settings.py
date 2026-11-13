@@ -101,7 +101,12 @@ TEMPLATES = [
 
 # --- Database and cache -------------------------------------------------------------------------
 
-DATABASES = {"default": env.db("DATABASE_URL")}
+# The running service connects as a role with only the rights it needs (DATABASE_URL). Migrations
+# and `grant_app_role` need the owning role: the entrypoint runs those with HUB_DATABASE_AS_OWNER=1,
+# which selects DATABASE_OWNER_URL, and the web and worker processes never see that URL. Where no
+# owner URL is set (development, CI) one role does both.
+_AS_OWNER = env.bool("HUB_DATABASE_AS_OWNER", default=False) and bool(env("DATABASE_OWNER_URL", default=""))
+DATABASES = {"default": env.db("DATABASE_OWNER_URL" if _AS_OWNER else "DATABASE_URL")}
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("DATABASE_CONN_MAX_AGE", default=60)
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -212,6 +217,7 @@ MFA_SUPPORTED_TYPES = ["totp", "webauthn", "recovery_codes"]
 MFA_PASSKEY_LOGIN_ENABLED = True
 MFA_TOTP_ISSUER = PRODUCT_NAME
 MFA_RECOVERY_CODE_COUNT = 10
+MFA_RECOVERY_CODES_SHOW_ONCE = True
 MFA_WEBAUTHN_ALLOW_INSECURE_ORIGIN = INSECURE_COOKIES
 # A step-up (see hub.accounts.stepup) is "fresh" for this long.
 MFA_STEP_UP_MAX_AGE = env.int("MFA_STEP_UP_MAX_AGE_SECONDS", default=300)
@@ -247,6 +253,9 @@ if env("GOOGLE_CLIENT_ID", default=""):
 # directory a refresh token is still honoured. Bounds how long the app keeps working after the
 # account is disabled there.
 SSO_REFRESH_MAX_AGE_HOURS = env.int("SSO_REFRESH_MAX_AGE_HOURS", default=24)
+# However often a refresh token is used, the app must send the user through sign-in again this
+# long after they last signed in.
+OIDC_SESSION_MAX_DAYS = env.int("OIDC_SESSION_MAX_DAYS", default=90)
 INVITATION_EXPIRY_DAYS = env.int("INVITATION_EXPIRY_DAYS", default=7)
 # How long a Pulsar operator may hold access to an organisation before it must be granted again.
 OPERATOR_ACCESS_MAX_HOURS = env.int("OPERATOR_ACCESS_MAX_HOURS", default=8)
@@ -384,7 +393,9 @@ LOGGING = {
     "root": {"handlers": ["console"], "level": LOG_LEVEL},
     "loggers": {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # Django's own "Not Found: <path>" lines would print secret-bearing paths in full; the hub's
+        # access log (hub.access) records every request with those redacted. Errors still show.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
         "hub": {"handlers": ["console"], "level": LOG_LEVEL, "propagate": False},
     },
 }

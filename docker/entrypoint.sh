@@ -16,7 +16,9 @@ wait_for_db() {
     i=0
     until python - <<'PY' >/dev/null 2>&1
 import os, psycopg
-psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=3).close()
+# The owning role exists from the start; the application role only after the first grant.
+url = os.environ.get("DATABASE_OWNER_URL") or os.environ["DATABASE_URL"]
+psycopg.connect(url, connect_timeout=3).close()
 PY
     do
         i=$((i + 1))
@@ -48,6 +50,14 @@ role="${1:-web}"
 case "$role" in
     web)
         wait_for_db
+        # Migrations, the cache table, schedules and role grants run as the owning database role
+        # when one is configured. The service itself then starts as the application role, and
+        # the owner's credentials are removed from its environment first.
+        if [ -n "${DATABASE_OWNER_URL:-}" ]; then
+            export HUB_DATABASE_AS_OWNER=1
+        else
+            log "WARNING: DATABASE_OWNER_URL is not set; the service runs as the role that owns the tables."
+        fi
         log "running migrations..."
         python manage.py migrate --noinput
         # The shared database cache (rate limits, login throttles) needs its table; idempotent.
@@ -55,23 +65,31 @@ case "$role" in
         python manage.py createcachetable
         log "ensuring housekeeping schedules..."
         python manage.py setup_schedules
+        if [ -n "${DATABASE_OWNER_URL:-}" ]; then
+            log "setting the application role's rights..."
+            python manage.py grant_app_role
+        fi
+        unset HUB_DATABASE_AS_OWNER DATABASE_OWNER_URL POSTGRES_PASSWORD
         # The root filesystem is read-only: worker heartbeat files go to the /tmp tmpfs, and the
-        # control socket (which gunicorn would put in the home directory) is off.
+        # control socket (which gunicorn would put in the home directory) is off. There is no
+        # gunicorn access log: the hub writes its own, with secrets in addresses redacted.
         log "starting gunicorn..."
         exec gunicorn hub.wsgi:application \
             --bind 0.0.0.0:8000 \
             --workers "${GUNICORN_WORKERS:-2}" \
             --timeout "${GUNICORN_TIMEOUT:-30}" \
             --worker-tmp-dir /tmp \
-            --no-control-socket \
-            --access-logfile -
+            --no-control-socket
         ;;
     worker)
         wait_for_migrations
+        unset DATABASE_OWNER_URL POSTGRES_PASSWORD
         log "starting django-q2 cluster..."
         exec python manage.py qcluster
         ;;
     *)
+        # One-off commands (`docker compose run --rm web python manage.py ...`). Add
+        # HUB_DATABASE_AS_OWNER=1 for the few that change the schema.
         exec "$@"
         ;;
 esac

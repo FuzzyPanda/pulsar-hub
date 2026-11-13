@@ -1,7 +1,8 @@
 """Step-up: a fresh second-factor check on demand.
 
-Wrap a view in `step_up_required` and it only runs if the session passed MFA within
-MFA_STEP_UP_MAX_AGE seconds. Otherwise the user is sent to allauth's MFA re-authentication page
+Wrap a view in `step_up_required` and it only runs if the session checked the authenticator app or
+a passkey within MFA_STEP_UP_MAX_AGE seconds. A password, an emailed code, a recovery code or having
+just enrolled a factor do not count: step-up proves the device is with whoever holds the session. Otherwise the user is sent to allauth's MFA re-authentication page
 and comes back to the same request (a suspended POST is replayed by allauth). Remote door actions
 (phase H6) will use it; today it guards role changes, security settings and operator access.
 """
@@ -18,7 +19,7 @@ from hub.accounts.mfa import has_mfa, mfa_is_fresh
 
 
 def is_step_up_fresh(request, max_age: int | None = None) -> bool:
-    return mfa_is_fresh(request, max_age or settings.MFA_STEP_UP_MAX_AGE)
+    return mfa_is_fresh(request, max_age or settings.MFA_STEP_UP_MAX_AGE, device_only=True)
 
 
 def step_up_required(view=None, *, max_age: int | None = None):

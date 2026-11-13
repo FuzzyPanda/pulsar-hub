@@ -30,7 +30,7 @@ staff; there is no self-service client registration.
 | Flow | Authorisation code with PKCE (`S256` only). No implicit, password or device flow |
 | Scopes | `openid` (required), `profile`, `email`, `offline_access` |
 | Signing | RS256; keys published at the JWKS address |
-| Lifetimes | Access and ID token 10 minutes; refresh token 30 days, rotated on every use; reuse of an old refresh token revokes the whole family |
+| Lifetimes | Access and ID token 10 minutes. Refresh token: rotated on every use, dead after 30 days unused, and dead 90 days after the user signed in however much it was used. Reuse of an old refresh token revokes the whole family |
 | Bearer tokens | In the `Authorization` header only, never in a query string. Stored by the hub as digests |
 
 **A token is for one user in one organisation.** A person who works for two employers signs in
@@ -54,7 +54,11 @@ re-checks the membership on every API call, and a role change or removal deletes
 tokens for the organisation, so a client learns of it within one access-token lifetime at most.
 
 A token stops working immediately when the user leaves or is removed from the organisation, the
-login is deactivated, or the organisation is suspended or deleted. For an organisation that
+login is deactivated, or the organisation is suspended or deleted. The app is also signed out (its
+tokens are deleted, so the next call fails and it must send the user through sign-in) when the
+user's role changes, the user changes their password or removes a second factor, or an Owner
+changes the organisation's sign-in rules. Clients must treat a `401` or a failed refresh as "sign in
+again", not as an error. For an organisation that
 requires single sign-on, a refresh token is honoured for 24 hours after the user last signed in
 through the organisation's directory (`SSO_REFRESH_MAX_AGE_HOURS`); after that the app must send
 the user through sign-in again.

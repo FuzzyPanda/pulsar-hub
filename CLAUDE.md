@@ -87,8 +87,15 @@ land, and update `docs/CONTRACTS.md` in the same change whenever an implementati
 - **Jobs, commands and tests** wrap work in `with organisation_context(org):`.
 - **Changes go through `services.py`**, which checks the role and writes the audit event. Views
   and API endpoints do not write business models directly.
+- **A Pulsar operator's visit is read-only.** In a service, `actor.require(role)` is for reading
+  and `actor.require_member(role)` is for anything that changes the organisation.
 - **No business model in the Django admin.** Organisations are run from `/operator/`.
-- Sensitive actions take `@step_up_required` (a fresh MFA check). H6 must use it.
+- Sensitive actions take `@step_up_required`: the authenticator app or a passkey within the last
+  five minutes. A password or recovery code does not pass it. H6 must use it.
+- **An address that carries a secret in its path** (an invitation link, a reset link) is added to
+  `_SECRET_PATHS` in `hub/middleware.py`, so the access log and error reports never hold it.
+- **The audit log is append-only** in the model, in a database trigger and in the rights of the
+  role the service runs as. Nothing updates or deletes an event; do not add a way to.
 
 ## Commands
 
@@ -108,6 +115,8 @@ pytest                          # everything; uses hub.test_settings and its own
 pytest -m isolation             # the organisation isolation suite on its own
 
 docker compose up --build       # web, worker, Postgres and Caddy, as production runs them
+# In Compose the service runs as a lesser database role. Commands that change the schema need the owner:
+docker compose run --rm -e HUB_DATABASE_AS_OWNER=1 web python manage.py migrate
 python manage.py generate_oidc_key                    # a value for OIDC_RSA_PRIVATE_KEY
 python manage.py provision_organisation "Name" owner@example.com --operator you@example.com
 ```

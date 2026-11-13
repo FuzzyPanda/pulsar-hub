@@ -55,7 +55,7 @@ class Actor:
 
     @property
     def role(self) -> Role | None:
-        """A visiting operator acts as an Admin: enough to help, not enough to own."""
+        """What the actor may *see*. A visiting operator sees what an Admin sees."""
         if self.membership is not None and self.membership.is_active:
             return self.membership.role_enum
         if self.is_operator:
@@ -68,6 +68,17 @@ class Actor:
 
     def require(self, minimum: Role) -> None:
         if not self.has_role(minimum):
+            raise PermissionDenied(f"This needs the {Role(minimum).label} role.")
+
+    def is_member_with(self, minimum: Role) -> bool:
+        """What the actor may *change*. Only a member changes an organisation: an operator's visit
+        is read-only, so it cannot leave anything behind, least of all a membership."""
+        return self.membership is not None and self.membership.has_role(minimum)
+
+    def require_member(self, minimum: Role) -> None:
+        if not self.is_member_with(minimum):
+            if self.is_operator:
+                raise PermissionDenied("An operator visit is read-only. Ask a member of the organisation.")
             raise PermissionDenied(f"This needs the {Role(minimum).label} role.")
 
 
@@ -224,6 +235,21 @@ def invite_first_owner(organisation: Organisation, *, owner_email: str, operator
     if organisation.pk not in organisations_without_owner():
         raise PermissionDenied("This organisation already has an Owner; they manage its people.")
     with organisation_context(organisation):
+        # Exactly one Owner invitation may be outstanding. A second one to another address would
+        # be a quiet way to add an Owner the client never chose; sending this one cancels the rest.
+        now = timezone.now()
+        for earlier in Invitation.objects.filter(role=Role.OWNER, accepted_at__isnull=True, revoked_at__isnull=True):
+            earlier.revoked_at = now
+            earlier.save(update_fields=["revoked_at"])
+            audit.record(
+                "member.invitation_revoked",
+                request=request,
+                actor=operator,
+                actor_kind=AuditEvent.ActorKind.OPERATOR,
+                target=earlier,
+                target_label=earlier.email,
+                data={"role": earlier.role, "replaced": True},
+            )
         return _create_invitation(
             email=owner_email, role=Role.OWNER, invited_by=operator, request=request, actor_kind="operator"
         )
@@ -343,12 +369,12 @@ def delete_organisation(organisation: Organisation, *, operator, confirm_slug: s
     org_ref, name, slug = str(organisation.pk), organisation.name, organisation.slug
     with transaction.atomic():
         Organisation.objects.filter(pk=organisation.pk).update(status=Organisation.Status.DELETING)
-        with connection.cursor() as cursor:  # unscoped: lets this transaction remove the organisation's audit rows
-            cursor.execute("SET LOCAL hub.audit_purge = 'on'")
-        # Cascades through every foreign key to the organisation, tokens included.
+        # The audit table is append-only. Its rows for this organisation leave through the one
+        # database function that may remove them, and only now that the status says "deleting".
+        with connection.cursor() as cursor:  # unscoped: purges the audit rows of the organisation being deleted
+            cursor.execute("SELECT hub_purge_organisation_audit(%s)", [organisation.pk])
+        # Cascades through every other foreign key to the organisation, tokens included.
         Organisation.objects.filter(pk=organisation.pk).delete()
-        with connection.cursor() as cursor:  # unscoped: closes the audit purge window
-            cursor.execute("SET LOCAL hub.audit_purge = 'off'")
         audit.record(
             "organisation.deleted",
             request=request,
@@ -405,23 +431,44 @@ def end_operator_access(access: OperatorAccess, *, ended_by, request=None) -> No
 
 
 def _may_grant(actor: Actor, role: Role) -> bool:
-    """Admins manage Managers and Staff. Only an Owner makes Admins and Owners. Operators make none."""
-    if actor.membership is not None and actor.membership.has_role(Role.OWNER):
+    """Admins manage Managers and Staff. Only an Owner makes Admins and Owners. A visiting operator
+    manages nobody."""
+    if actor.is_member_with(Role.OWNER):
         return True
-    if actor.has_role(Role.ADMIN):
+    if actor.is_member_with(Role.ADMIN):
         return role in (Role.MANAGER, Role.STAFF)
     return False
 
 
-def _create_invitation(*, email: str, role: Role, invited_by, request, actor_kind: str | None = None):
+def _create_invitation(
+    *, email: str, role: Role, invited_by, request, actor_kind: str | None = None, replace_guard=None
+):
     organisation = require_organisation()
     email = email.strip().lower()
     if not email or "@" not in email:
         raise ValidationError("Enter an email address.")
     if Membership.objects.filter(user__email__iexact=email, is_active=True).exists():
         raise ValidationError("That person is already a member.")
+    # A new invitation replaces an earlier one to the same address. That is a revocation, so it
+    # needs the same right as revoking, and it is recorded as one.
     now = timezone.now()
-    Invitation.objects.filter(email=email, accepted_at__isnull=True, revoked_at__isnull=True).update(revoked_at=now)
+    earlier = list(Invitation.objects.filter(email=email, accepted_at__isnull=True, revoked_at__isnull=True))
+    if replace_guard is not None:
+        for invitation in earlier:
+            if invitation.is_pending and not replace_guard(Role(invitation.role)):
+                raise PermissionDenied("That address already has an invitation you cannot replace.")
+    for invitation in earlier:
+        invitation.revoked_at = now
+        invitation.save(update_fields=["revoked_at"])
+        audit.record(
+            "member.invitation_revoked",
+            request=request,
+            actor=invited_by,
+            actor_kind=actor_kind,
+            target=invitation,
+            target_label=email,
+            data={"role": invitation.role, "replaced": True},
+        )
     token = Invitation.new_token()
     invitation = Invitation.objects.create(
         email=email,
@@ -470,12 +517,18 @@ def invite_member(*, actor: Actor, email: str, role: str, request=None):
     role = Role(role)
     if not _may_grant(actor, role):
         raise PermissionDenied("You cannot invite someone with that role.")
-    return _create_invitation(email=email, role=role, invited_by=actor.user, request=request)
+    return _create_invitation(
+        email=email,
+        role=role,
+        invited_by=actor.user,
+        request=request,
+        replace_guard=lambda earlier_role: _may_grant(actor, earlier_role),
+    )
 
 
 @transaction.atomic
 def revoke_invitation(invitation: Invitation, *, actor: Actor, request=None) -> None:
-    actor.require(Role.ADMIN)
+    actor.require_member(Role.ADMIN)
     if not _may_grant(actor, Role(invitation.role)):
         raise PermissionDenied("You cannot revoke that invitation.")
     if invitation.accepted_at is None and invitation.revoked_at is None:
@@ -491,6 +544,9 @@ def accept_invitation(invitation: Invitation, *, user, request=None) -> Membersh
         raise ValidationError("This invitation is no longer valid.")
     if user.email.lower() != invitation.email.lower():
         raise PermissionDenied("This invitation was sent to a different email address.")
+    if user.is_platform_operator:
+        # Pulsar staff reach an organisation through a time-limited visit, never a membership.
+        raise PermissionDenied("A Pulsar operator login cannot join an organisation.")
     with organisation_context(invitation.organisation):
         locked = Invitation.objects.select_for_update().get(pk=invitation.pk)
         if not locked.is_pending:
@@ -588,12 +644,14 @@ def update_security_settings(*, actor: Actor, staff_mfa_required: bool, sso_requ
             setattr(organisation, field, value)
     if changes:
         organisation.save(update_fields=[*changes, "updated_at"])
+        # The rules for getting a token have changed; everyone's app signs in again under them.
+        revoke_tokens(organisation=organisation)
         _audit(actor, "organisation.security_changed", request=request, target=organisation, data=changes)
 
 
 @transaction.atomic
 def rename_organisation(*, actor: Actor, name: str, request=None) -> None:
-    actor.require(Role.ADMIN)
+    actor.require_member(Role.ADMIN)
     organisation = require_organisation()
     name = name.strip()
     if not name:
@@ -635,18 +693,23 @@ def remove_identity_provider(idp: IdentityProvider, *, actor: Actor, request=Non
     data = {"provider": idp.provider, "tenant": idp.tenant}
     pk = idp.pk
     idp.delete()
+    revoke_tokens(organisation=organisation)
     _audit(actor, "organisation.identity_provider_removed", request=request, target_label=str(pk), data=data)
 
 
 # --- Tokens ---------------------------------------------------------------------------------------
 
 
-def revoke_tokens(*, organisation: Organisation, user=None) -> None:
-    """Delete OAuth tokens bound to an organisation, for one user or for everyone."""
+def revoke_tokens(*, organisation: Organisation | None = None, user=None) -> None:
+    """Delete OAuth tokens: an organisation's, one user's in an organisation, or all of a user's."""
     from hub.accounts.models import AccessToken, Grant, RefreshToken
 
+    if organisation is None and user is None:
+        raise ValueError("revoke_tokens needs an organisation, a user, or both.")
     for model in (RefreshToken, AccessToken, Grant):
-        queryset = model.objects.filter(organisation=organisation)
+        queryset = model.objects.all()
+        if organisation is not None:
+            queryset = queryset.filter(organisation=organisation)
         if user is not None:
             queryset = queryset.filter(user=user)
         queryset.delete()

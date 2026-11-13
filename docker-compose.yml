@@ -5,7 +5,7 @@
 # wait on health checks; web migrates before it serves and the worker waits for web.
 #
 # Required in .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DJANGO_SECRET_KEY and the rest
-# of .env.example. DATABASE_URL is composed below from the POSTGRES_* values, so it is set once.
+# of .env.example. The database URLs are composed below from the POSTGRES_* values.
 
 name: pulsar-hub
 
@@ -18,10 +18,16 @@ x-hardened: &hardened
   read_only: true
   tmpfs: ["/tmp"]
 
+# Two database roles. The owner (POSTGRES_USER) creates the schema; only the web container's
+# entrypoint uses it, for migrations, and removes it from the environment before the service
+# starts. The service itself runs as POSTGRES_APP_USER, which cannot change the schema and can only
+# add to and read the audit log. Passwords with URL-special characters (@ : / ? #) must be
+# percent-encoded; a hex password (`openssl rand -hex 24`) avoids the question.
 x-app-env: &app-env
-  # Host is the compose service name `db`. A password with URL-special characters (@ : / ? #)
-  # must be percent-encoded, or use a hex password (`openssl rand -hex 24`).
-  DATABASE_URL: postgres://${POSTGRES_USER:?set in .env}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:?set in .env}
+  DATABASE_URL: postgres://${POSTGRES_APP_USER:?set in .env}:${POSTGRES_APP_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:?set in .env}
+
+x-owner-env: &owner-env
+  DATABASE_OWNER_URL: postgres://${POSTGRES_USER:?set in .env}:${POSTGRES_PASSWORD:?set in .env}@db:5432/${POSTGRES_DB:?set in .env}
 
 networks:
   hub-net:
@@ -57,7 +63,7 @@ services:
     command: ["web"]
     env_file: [.env]
     environment:
-      <<: *app-env
+      <<: [*app-env, *owner-env]
     depends_on:
       db:
         condition: service_healthy

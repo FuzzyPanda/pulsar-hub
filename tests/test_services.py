@@ -124,13 +124,44 @@ def test_who_may_invite_whom(world_a, by, role, allowed):
             _invite(world_a, "new@example.test", role, by=by)
 
 
-def test_a_visiting_operator_cannot_create_owners_or_admins(world_a):
+def test_an_operator_visit_is_read_only(world_a):
+    """A visit must leave nothing behind, least of all a membership the operator controls."""
     visiting = Actor(world_a.operator_access.operator, None, world_a.operator_access)
+    assert visiting.has_role(Role.ADMIN) and not visiting.is_member_with(Role.STAFF)
     with organisation_context(world_a.organisation):
-        services.invite_member(actor=visiting, email="s@example.test", role=Role.STAFF)
-        for role in (Role.OWNER, Role.ADMIN):
+        for role in Role:
             with pytest.raises(PermissionDenied):
-                services.invite_member(actor=visiting, email="o@example.test", role=role)
+                services.invite_member(actor=visiting, email="s@example.test", role=role)
+        with pytest.raises(PermissionDenied):
+            services.change_role(world_a.memberships["staff"], actor=visiting, new_role=Role.MANAGER)
+        with pytest.raises(PermissionDenied):
+            services.remove_member(world_a.memberships["staff"], actor=visiting)
+        with pytest.raises(PermissionDenied):
+            services.revoke_invitation(world_a.invitation, actor=visiting)
+        with pytest.raises(PermissionDenied):
+            services.rename_organisation(actor=visiting, name="Renamed")
+        with pytest.raises(PermissionDenied):
+            services.update_security_settings(actor=visiting, staff_mfa_required=True, sso_required=False)
+
+
+def test_a_pulsar_operator_login_cannot_hold_a_membership(world_a):
+    operator_login = world_a.operator_access.operator
+    _invitation, token = _invite(world_a, operator_login.email, Role.MANAGER)
+    with pytest.raises(PermissionDenied):
+        services.accept_invitation(services.find_pending_invitation(token), user=operator_login)
+    assert not Membership.all_organisations.filter(user=operator_login).exists()
+
+
+def test_reinviting_cannot_be_used_to_cancel_an_invitation_you_could_not_revoke(world_a):
+    _invitation, admin_token = _invite(world_a, "newadmin@example.test", Role.ADMIN, by="owner")
+    with pytest.raises(PermissionDenied):
+        _invite(world_a, "newadmin@example.test", Role.STAFF, by="admin")
+    assert services.find_pending_invitation(admin_token) is not None
+    # The Owner may replace it, and the replacement is on the record.
+    _invite(world_a, "newadmin@example.test", Role.MANAGER, by="owner")
+    assert services.find_pending_invitation(admin_token) is None
+    event = AuditEvent.all_organisations.filter(action="member.invitation_revoked").get()
+    assert event.data == {"role": "admin", "replaced": True} and event.actor == world_a.owner
 
 
 def test_an_existing_member_cannot_be_invited_again(world_a):
@@ -345,9 +376,47 @@ def test_deleting_a_login_keeps_its_audit_trail(world_a):
 
         event = audit.record("test.event", actor=world_a.staff)
         Membership.objects.filter(user=world_a.staff).delete()
+    staff_id, staff_email = world_a.staff.pk, world_a.staff.email
     world_a.staff.delete()
+    # The row is untouched: not even the actor id is rewritten.
     event = AuditEvent.all_organisations.get(pk=event.pk)
-    assert event.actor is None and event.actor_label == world_a.staff.email
+    assert event.actor_id == staff_id and event.actor_label == staff_email
+    assert AuditEvent.all_organisations.select_related("actor").get(pk=event.pk).actor is None
+
+
+def test_the_orm_cannot_rewrite_or_bulk_delete_events(world_a):
+    with organisation_context(world_a.organisation):
+        from hub.audit import services as audit
+
+        event = audit.record("member.removed", actor=world_a.admin)
+        for manager in (AuditEvent.objects, AuditEvent.all_organisations):
+            with pytest.raises(TypeError):
+                manager.filter(pk=event.pk).update(actor=None)
+            with pytest.raises(TypeError):
+                manager.filter(pk=event.pk).delete()
+    assert AuditEvent.all_organisations.get(pk=event.pk).actor_id == world_a.admin.pk
+
+
+def test_the_purge_function_only_serves_an_organisation_being_deleted(world_a):
+    with organisation_context(world_a.organisation):
+        from hub.audit import services as audit
+
+        audit.record("test.event", actor=world_a.owner)
+    with pytest.raises(Exception, match="not being deleted"), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("SELECT hub_purge_organisation_audit(%s)", [world_a.organisation.pk])
+    # There is no switch a session can flip. The only thing that unlocks a row is its organisation
+    # being deleted, and an account-level event has no organisation at all.
+    for statement in (
+        "UPDATE audit_auditevent SET actor_id = NULL WHERE organisation_id = %s",
+        "DELETE FROM audit_auditevent WHERE organisation_id = %s",
+    ):
+        with pytest.raises(Exception, match="append-only"), transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute("SET LOCAL hub.audit_purge = 'on'")  # the flag an earlier design honoured
+            cursor.execute(statement, [world_a.organisation.pk])
+    account_event = audit.record("auth.signed_in", actor=world_a.owner, organisation=None)
+    with pytest.raises(Exception, match="append-only"), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("DELETE FROM audit_auditevent WHERE id = %s", [account_event.pk])
+    assert AuditEvent.all_organisations.filter(organisation=world_a.organisation, action="test.event").exists()
 
 
 # --- mail outages and the first owner -------------------------------------------------------------
@@ -370,7 +439,9 @@ def test_operator_can_resend_the_owner_invitation_until_there_is_an_owner(operat
     )
     assert organisation.pk in services.organisations_without_owner()
     _invitation, token = services.invite_first_owner(organisation, owner_email="owner@harbour.test", operator=operator)
-    assert services.find_pending_invitation(first_token) is not None  # a different address: both stand
+    # Only one Owner invitation is ever outstanding: a second address cannot quietly become Owner.
+    assert services.find_pending_invitation(first_token) is None
+    assert actions(organisation).count("member.invitation_revoked") == 1
     services.accept_invitation(services.find_pending_invitation(token), user=f.UserFactory(email="owner@harbour.test"))
 
     assert organisation.pk not in services.organisations_without_owner()

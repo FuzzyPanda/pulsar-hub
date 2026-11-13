@@ -215,16 +215,21 @@ def test_operator_visiting_b_gets_404_from_a(client, world_a, world_b, name):
         assert snapshot(world_a.organisation) == before
 
 
-def test_operator_visit_opens_one_organisation_as_admin(client, world_a, world_b):
+def test_operator_visit_reads_one_organisation_and_changes_nothing(client, world_a, world_b):
     operator = world_a.operator_access.operator
     f.sign_in(client, operator, mfa=True)
     slug = world_a.organisation.slug
-    home = client.get(reverse("org_home", kwargs={"org_slug": slug}))
-    assert home.status_code == 200 and world_b.marker not in home.content.decode()
-    assert client.get(reverse("audit_list", kwargs={"org_slug": slug})).status_code == 200
-    # Admin-equivalent, never Owner: sign-in rules and export stay with the organisation.
-    assert client.post(reverse("org_security", kwargs={"org_slug": slug}), {"sso_required": "on"}).status_code == 403
-    assert client.post(reverse("org_export", kwargs={"org_slug": slug})).status_code == 403
+    for name in ("org_home", "member_list", "org_settings", "audit_list"):
+        page = client.get(reverse(name, kwargs={"org_slug": slug}))
+        assert page.status_code == 200, name
+        assert world_b.marker not in page.content.decode()
+    # Every write route, called as the visiting operator, leaves the organisation exactly as it was.
+    before = snapshot(world_a.organisation)
+    for name, route in ORG_ROUTES.items():
+        if route.method == "POST" and name != "operator_access_end":
+            response = call(client, name, route, world_a, world_a)
+            assert response.status_code in (302, 403), name
+    assert snapshot(world_a.organisation) == before
 
 
 def test_operator_must_have_passed_mfa(client, world_a):

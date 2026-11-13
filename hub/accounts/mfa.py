@@ -19,15 +19,25 @@ def _records(request) -> list[dict]:
     return get_authentication_records(request, request.user)
 
 
-def last_mfa_at(request) -> float | None:
+def last_mfa_at(request, *, device_only: bool = False) -> float | None:
     """When this session last passed a second factor (epoch seconds), or None.
 
-    Enrolling a factor counts: activating it means entering a code or touching the key.
+    Enrolling a first factor counts: activating it means entering a code or touching the key.
+    With `device_only`, only a check against the authenticator app or a passkey counts: not a
+    recovery code and not an enrolment. Step-up uses that, because its whole point is to prove
+    the device is in the hand of whoever holds the session.
     """
-    times = [r["at"] for r in _records(request) if r.get("method") == "mfa" and "at" in r]
-    enrolled_at = request.session.get(ENROLLED_IN_SESSION_KEY)
-    if enrolled_at:
-        times.append(enrolled_at)
+    times = []
+    for record in _records(request):
+        if record.get("method") != "mfa" or "at" not in record:
+            continue
+        if device_only and record.get("type") not in SECOND_FACTORS:
+            continue
+        times.append(record["at"])
+    if not device_only:
+        enrolled_at = request.session.get(ENROLLED_IN_SESSION_KEY)
+        if enrolled_at:
+            times.append(enrolled_at)
     return max(times) if times else None
 
 
@@ -36,8 +46,8 @@ def mfa_satisfied(request) -> bool:
     return has_mfa(request.user) and last_mfa_at(request) is not None
 
 
-def mfa_is_fresh(request, max_age: int) -> bool:
-    at = last_mfa_at(request)
+def mfa_is_fresh(request, max_age: int, *, device_only: bool = False) -> bool:
+    at = last_mfa_at(request, device_only=device_only)
     return has_mfa(request.user) and at is not None and (time.time() - at) < max_age
 
 

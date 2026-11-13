@@ -11,6 +11,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 from oauth2_provider.oauth2_validators import OAuth2Validator
+from oauthlib.oauth2.rfc6749 import errors
 
 from hub.accounts.models import Grant
 from hub.organisations.models import Membership, Organisation
@@ -20,20 +21,34 @@ def active_membership(user, organisation: Organisation | None) -> Membership | N
     """The user's live membership, or None if they have left or the organisation is not active."""
     if user is None or organisation is None or not user.is_active or not organisation.is_active:
         return None
-    return Membership.all_organisations.filter(  # unscoped: checks the token's own user and organisation
-        organisation=organisation, user=user, is_active=True
-    ).first()
+    return (
+        Membership.all_organisations.filter(  # unscoped: checks the token's own user and organisation
+            organisation=organisation, user=user, is_active=True
+        )
+        .select_related("organisation")
+        .first()
+    )
 
 
-def sso_refresh_allowed(organisation: Organisation, *, via_sso: bool, authenticated_at) -> bool:
-    """An organisation that requires single sign-on only honours a refresh token for a limited
-    time after the user last came through its directory. After that the app must send the user
-    through sign-in again, which is where a disabled directory account is stopped."""
-    if not organisation.sso_required:
-        return True
-    if not via_sso or authenticated_at is None:
-        return False
-    return timezone.now() - authenticated_at < timedelta(hours=settings.SSO_REFRESH_MAX_AGE_HOURS)
+def refresh_refusal(refresh_token, membership: Membership) -> str | None:
+    """Why this refresh token may no longer be used, or None if it may.
+
+    A refresh happens without a browser session, so it is judged on what the token recorded about
+    the session that asked for it.
+    """
+    organisation = membership.organisation
+    age = timezone.now() - refresh_token.authenticated_at
+    if age > timedelta(days=settings.OIDC_SESSION_MAX_DAYS):
+        return "the sign-in is too old"
+    if membership.mfa_required and not refresh_token.mfa_passed:
+        return "the role now requires two-step sign-in"
+    if organisation.sso_required:
+        # Honoured only for a short time after the user last came through the organisation's own
+        # directory. After that the app must send the user through sign-in again, which is where
+        # a disabled directory account is stopped.
+        if not refresh_token.via_sso or age > timedelta(hours=settings.SSO_REFRESH_MAX_AGE_HOURS):
+            return "the organisation requires single sign-on"
+    return None
 
 
 class HubOAuth2Validator(OAuth2Validator):
@@ -53,6 +68,10 @@ class HubOAuth2Validator(OAuth2Validator):
         organisation = getattr(request, "organisation", None)
         if organisation is None:
             raise ValueError("An authorisation code cannot be issued without an organisation.")
+        # This method replaces the toolkit's, so its refusal of the `plain` method is repeated
+        # here: with `plain` the challenge is the verifier, in full view in the address bar.
+        if request.code_challenge_method != "S256":
+            raise errors.InvalidRequestError(description="code_challenge_method must be S256.", request=request)
         if not expires:
             from oauth2_provider.settings import oauth2_settings
 
@@ -74,6 +93,7 @@ class HubOAuth2Validator(OAuth2Validator):
             organisation=organisation,
             authenticated_at=getattr(request, "authenticated_at", None) or timezone.now(),
             via_sso=bool(getattr(request, "via_sso", False)),
+            mfa_passed=bool(getattr(request, "mfa_passed", False)),
         )
 
     def validate_code(self, client_id, code, client, request, *args, **kwargs):
@@ -85,6 +105,7 @@ class HubOAuth2Validator(OAuth2Validator):
         request.organisation = grant.organisation
         request.authenticated_at = grant.authenticated_at
         request.via_sso = grant.via_sso
+        request.mfa_passed = grant.mfa_passed
         return True
 
     # -- tokens ------------------------------------------------------------------------------------
@@ -130,6 +151,7 @@ class HubOAuth2Validator(OAuth2Validator):
             organisation=access_token.organisation,
             authenticated_at=getattr(request, "authenticated_at", None) or timezone.now(),
             via_sso=bool(getattr(request, "via_sso", False)),
+            mfa_passed=bool(getattr(request, "mfa_passed", False)),
         )
         set_token_value(refresh_token, refresh_token_code)
         refresh_token.save()
@@ -139,14 +161,13 @@ class HubOAuth2Validator(OAuth2Validator):
         if not super().validate_refresh_token(refresh_token, client, request, *args, **kwargs):
             return False
         rt = request.refresh_token_instance
-        organisation = rt.organisation
-        if active_membership(rt.user, organisation) is None:
+        membership = active_membership(rt.user, rt.organisation)
+        if membership is None or refresh_refusal(rt, membership) is not None:
             return False
-        if not sso_refresh_allowed(organisation, via_sso=rt.via_sso, authenticated_at=rt.authenticated_at):
-            return False
-        request.organisation = organisation
+        request.organisation = rt.organisation
         request.authenticated_at = rt.authenticated_at
         request.via_sso = rt.via_sso
+        request.mfa_passed = rt.mfa_passed
         return True
 
     def validate_bearer_token(self, token, scopes, request):

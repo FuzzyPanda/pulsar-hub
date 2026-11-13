@@ -84,9 +84,15 @@ class User(AbstractBaseUser, PermissionsMixin):
 #
 # A token is issued to one user, for one organisation (docs/CONTRACTS.md, "Hub and the app").
 # The organisation is chosen on the authorisation screen, travels on the authorisation code, and
-# is copied to the access and refresh tokens. `authenticated_at` is when the user last proved who
-# they were in the browser; an organisation that requires single sign-on uses it to stop a refresh
-# token outliving the account in the client's own directory.
+# is copied to the access and refresh tokens. Three facts about the browser session that asked for
+# the token travel with it, so a refresh can be judged without that session:
+#   authenticated_at  when the user signed in. A refresh token dies a fixed time after it, however
+#                     often it is used (OIDC_SESSION_MAX_DAYS).
+#   via_sso           the session came through one of this organisation's own directories. An
+#                     organisation that requires single sign-on honours the refresh token only
+#                     for a short time after it (SSO_REFRESH_MAX_AGE_HOURS).
+#   mfa_passed        the session had passed a second factor. A role that needs MFA cannot
+#                     refresh without it.
 #
 # django-oauth-toolkit's models refer to each other, so swapping some means swapping all five.
 # Application and IDToken are unchanged copies of the toolkit's.
@@ -108,6 +114,7 @@ class Grant(AbstractGrant):
     organisation = models.ForeignKey("organisations.Organisation", on_delete=models.CASCADE, related_name="+")
     authenticated_at = models.DateTimeField()
     via_sso = models.BooleanField(default=False)
+    mfa_passed = models.BooleanField(default=False)
 
     class Meta(AbstractGrant.Meta):
         pass
@@ -124,6 +131,7 @@ class RefreshToken(AbstractRefreshToken):
     organisation = models.ForeignKey("organisations.Organisation", on_delete=models.CASCADE, related_name="+")
     authenticated_at = models.DateTimeField()
     via_sso = models.BooleanField(default=False)
+    mfa_passed = models.BooleanField(default=False)
 
     class Meta(AbstractRefreshToken.Meta):
         pass

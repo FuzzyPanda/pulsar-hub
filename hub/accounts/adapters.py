@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.urls import reverse
 
 from hub.accounts import invitations
-from hub.accounts.mfa import SECOND_FACTORS
+from hub.accounts.mfa import SECOND_FACTORS, has_mfa
 from hub.organisations.services import identity_providers_for, user_requires_mfa
 
 
@@ -37,6 +37,14 @@ class AccountAdapter(DefaultAccountAdapter):
 
     def get_signup_redirect_url(self, request) -> str:
         return self.get_login_redirect_url(request)
+
+    def get_reauthentication_methods(self, user) -> list[dict]:
+        """A login that has a second factor confirms itself with that factor, not with a password
+        or an emailed code. (AccountPolicyMiddleware enforces the same on the pages themselves.)"""
+        methods = super().get_reauthentication_methods(user)
+        if has_mfa(user):
+            return [m for m in methods if m["id"].startswith("mfa_")] or methods
+        return methods
 
 
 class MFAAdapter(DefaultMFAAdapter):

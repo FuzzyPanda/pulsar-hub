@@ -24,6 +24,8 @@ H0 to H2 need nothing from PAC. H1 is the largest piece.
 - [x] Settings from the environment; `.env.example`; no secret in the image.
 - [x] Docker Compose: web, worker (`qcluster`), Postgres, Caddy. Non-root containers, health
   checks, migrate-before-traffic entrypoint.
+  The service runs as a second database role that cannot change the schema or rewrite the audit
+  log; only the entrypoint's migration step uses the owning role.
 - [x] CI on every pull request: `ruff`, `pytest`, `makemigrations --check`, secret scan.
   Written, and every step passes locally. **It has not run on GitHub yet**: the repository did not
   exist when H0 was built. Confirm the first run, then make "Organisation isolation suite" a
@@ -55,6 +57,11 @@ H0 to H2 need nothing from PAC. H1 is the largest piece.
   `GOOGLE_CLIENT_ID`) and one live sign-in with each before this box is ticked. How it works is in
   `CONTRACTS.md`, "Sign-in".
 - [x] Step-up: a fresh MFA check on demand, used later by H6.
+
+H1 was reviewed independently for security on 2026-11-13. No path across organisations was found.
+The twelve other defects it proved are fixed, each with a regression test in
+`tests/test_hardening.py`. It could not cover live Microsoft or Google sign-in, or GitHub branch
+protection.
 
 **Hub as the sign-in for other products**
 

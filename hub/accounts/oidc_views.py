@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from django.shortcuts import render
 from oauth2_provider.views import AuthorizationView as BaseAuthorizationView
 
-from hub.accounts.mfa import authenticated_at, session_sso_identity
+from hub.accounts.mfa import authenticated_at, mfa_satisfied
 from hub.audit import services as audit
 from hub.organisations.context import organisation_context
-from hub.organisations.entry import evaluate_entry
+from hub.organisations.entry import evaluate_entry, sso_satisfied
 from hub.organisations.middleware import refusal_response
 from hub.organisations.services import memberships_for_user
 
@@ -70,7 +70,9 @@ class AuthorizationView(BaseAuthorizationView):
             at = authenticated_at(request)
             credentials["organisation"] = self.organisation
             credentials["authenticated_at"] = datetime.fromtimestamp(at, tz=UTC) if at else None
-            credentials["via_sso"] = session_sso_identity(request) is not None
+            # Through one of this organisation's own directories, not just any directory.
+            credentials["via_sso"] = sso_satisfied(request, self.organisation)
+            credentials["mfa_passed"] = mfa_satisfied(request)
         response = super().create_authorization_response(request, scopes, credentials, allow)
         if allow:
             with organisation_context(self.organisation):
