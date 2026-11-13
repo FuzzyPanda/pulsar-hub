@@ -137,3 +137,20 @@ def test_housekeeping_schedules_are_idempotent_and_runnable():
     for schedule in Schedule.objects.all():
         assert schedule.func == "django.core.management.call_command"
         call_command(eval(schedule.args), stdout=io.StringIO())  # noqa: S307
+
+
+@pytest.mark.django_db
+def test_content_security_policy_and_templates_keep_to_it(client):
+    response = client.get("/accounts/login/")
+    policy = response["Content-Security-Policy"]
+    assert "default-src 'self'" in policy and "frame-ancestors 'none'" in policy and "unsafe-inline" not in policy
+    assert client.get("/no-such-page/")["Content-Security-Policy"] == policy
+    # Nothing inline in the hub's own templates, or the policy would break the page.
+    import re
+
+    offenders = []
+    for path in (ROOT / "hub" / "templates").rglob("*.html"):
+        text = path.read_text()
+        if re.search(r"\sstyle=|<style|\son\w+=\"|<script(?![^>]*\b(src|type=\"application/json\"))", text):
+            offenders.append(str(path.relative_to(ROOT)))
+    assert not offenders, offenders

@@ -25,3 +25,22 @@ class RequestContextMiddleware:
             org_ref_var.reset(tokens[2])
         response["X-Request-ID"] = request_id
         return response
+
+
+# Scripts, styles, fonts and frames only from the hub itself; nothing inline. Images may also be
+# data: URLs (the authenticator-app QR code is one). The hub's own templates and django-allauth's
+# pages keep to this: page data travels in `<script type="application/json">` blocks, which are
+# not executed.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+)
+
+
+class ContentSecurityPolicyMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        return response
