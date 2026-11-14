@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from hub.access.services import desired_access
 from hub.api.authentication import GatewayAuthentication, OrganisationTokenAuthentication, ServiceTokenAuthentication
+from hub.api.exceptions import refusal
 from hub.api.models import Scope
 from hub.api.permissions import HasScope, IsGateway
 from hub.api.serializers_machine import EventSerializer, PersonSerializer, SiteSerializer
@@ -22,9 +23,11 @@ from hub.gateways.models import GatewayEvent
 from hub.organisations.models import Role
 
 
-def _problem(exc: Exception, code: int = status.HTTP_400_BAD_REQUEST) -> Response:
+def _problem(exc: Exception, http_status: int = status.HTTP_400_BAD_REQUEST, code: str = "") -> Response:
+    """A service's refusal as the API's. The code is the one given here, else the one the service
+    put on its `ValidationError`, else `invalid_request` (docs/CONTRACTS.md, "Refusals")."""
     detail = "; ".join(exc.messages) if isinstance(exc, ValidationError) else (str(exc) or "Refused.")
-    return Response({"detail": detail}, status=code)
+    return refusal(detail, code or getattr(exc, "code", None) or "invalid_request", http_status)
 
 
 def _json_object(request) -> dict:
@@ -61,7 +64,7 @@ class GatewayPairView(APIView):
             )
         except (PermissionDenied, ValidationError):
             # One answer for every failure: the endpoint never says which codes exist.
-            return Response({"detail": "That pairing code is not valid."}, status=status.HTTP_403_FORBIDDEN)
+            return refusal("That pairing code is not valid.", "pairing_code_not_valid", status.HTTP_403_FORBIDDEN)
         site, organisation = gateway.site, gateway.organisation
         return Response(
             {
@@ -118,7 +121,7 @@ class GatewayEventsView(GatewayView):
             body=body,
             header=request.headers.get("X-Hub-Signature", ""),
         ):
-            return Response({"detail": "The signature does not match the body."}, status=status.HTTP_400_BAD_REQUEST)
+            return refusal("The signature does not match the body.", "invalid_signature", status.HTTP_400_BAD_REQUEST)
         try:
             payload = _json_object(request)
             result = gateways.ingest_events(self.gateway, payload.get("events"))
@@ -161,24 +164,27 @@ class DirectoryView(ServiceView):
             allowed_person = {"person_ref", "name", "work_email", "status"}
             allowed_site = {"site_ref", "name", "address", "timezone", "is_active"}
             if any(set(row) - allowed_person for row in people) or any(set(row) - allowed_site for row in sites):
-                # Refused, not ignored: a sender that has started including more than these fields
-                # must find out now, before it sends something that should never leave it.
+                # Refused whole, not ignored and not judged row by row: a sender that has started
+                # including more than these fields must find out now, before it sends something
+                # that should never leave it (rule 11).
                 raise ValidationError(
                     "A person may carry only person_ref, name, work_email and status; "
-                    "a site only site_ref, name, address, timezone and is_active."
+                    "a site only site_ref, name, address, timezone and is_active.",
+                    code="unexpected_field",
                 )
-            counts = directory.apply_rostering_snapshot(
+            result = directory.apply_rostering_snapshot(
                 people=people,
                 sites=sites,
                 allow_empty=payload.get("allow_empty") is True,
                 token=request._request.service_token,
             )
         except PermissionDenied as exc:
-            return _problem(exc, status.HTTP_403_FORBIDDEN)
+            # The only thing the snapshot refuses a caller for, once its token and scope are good.
+            return _problem(exc, status.HTTP_403_FORBIDDEN, "directory_source_is_hub")
         except ValidationError as exc:
-            conflict = "would end everyone" in " ".join(exc.messages)
+            conflict = getattr(exc, "code", None) == "empty_snapshot"
             return _problem(exc, status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST)
-        return Response(counts)
+        return Response(result)
 
 
 class PeopleView(ServiceView):
@@ -194,7 +200,12 @@ class SitesView(ServiceView):
     minimum_role = Role.MANAGER
 
     def get(self, request):
-        return Response(SiteSerializer(Site.objects.order_by("name", "pk"), many=True).data)
+        """Every site, each with the hub's view of its gateway (docs/CONTRACTS.md): whether it is
+        in contact and whether it has confirmed the access the hub wants there. Read-only, and
+        nothing about a door is in it."""
+        sites = list(Site.objects.order_by("name", "pk"))
+        context = {"gateways": gateways.site_gateway_summaries(sites)}
+        return Response(SiteSerializer(sites, many=True, context=context).data)
 
 
 class EventsView(ServiceView):
@@ -208,7 +219,7 @@ class EventsView(ServiceView):
             after = int(request.query_params.get("after", "0"))
             limit = max(1, min(int(request.query_params.get("limit", "200")), 500))
         except ValueError:
-            return Response({"detail": "after and limit must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
+            return refusal("after and limit must be whole numbers.", "invalid_request", status.HTTP_400_BAD_REQUEST)
         events = GatewayEvent.objects.filter(pk__gt=max(after, 0)).order_by("pk")
         prefix = request.query_params.get("type", "")
         if prefix:

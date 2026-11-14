@@ -1,6 +1,6 @@
 # Contracts — ids, pairing, calls and events
 
-**Proposed 2026-11-13.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
+**Proposed 2026-11-13; refusal codes, row-by-row directory and gateway health added 2026-11-14.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
 sections on gateways and Pulsar Rostering are built on the hub side. If an implementation differs from this file, change
 this file in the same pull request.
 
@@ -69,6 +69,40 @@ that row holds no secret. A directory never creates a membership: people still j
 invitation, and a first sign-in through a directory is accepted only while accepting an invitation
 from an organisation that lists that directory, for the invited address. A directory's email claim
 is never used to match an existing login.
+
+## Refusals (every `/api/v1/` call)
+
+Every refusal, from any `/api/v1/` call, is JSON with two keys:
+
+```json
+{"detail": "This token does not have the directory:read scope.", "code": "missing_scope"}
+```
+
+`detail` is one sentence for a person and may be reworded at any time. `code` is for a program: it
+is stable, and a caller decides what to do next from the HTTP status and the code, never from the
+sentence. A caller must treat a code it does not know as it treats the status alone.
+
+| Status | `code` | Meaning | What the caller does |
+|---|---|---|---|
+| 401 | `not_authenticated` | No bearer credential was sent | Send one |
+| 401 | `token_not_accepted` | The credential is unknown, revoked, or its site or organisation is closed | Stop calling; a person must issue a new one |
+| 403 | `missing_scope` | The service token is accepted but lacks the scope this call needs | Keep using its other scopes. A token's scopes are fixed when it is made, so a person creates a new token that has this one |
+| 403 | `directory_source_is_hub` | `PUT /directory` for an organisation whose people and sites are managed in the hub | A person switches the directory source in the hub console |
+| 403 | `role_too_low` | A user token whose role is below what the call needs | Nothing; hide the feature |
+| 403 | `pairing_code_not_valid` | `POST /gateways/pair` refused, whatever the cause | A person makes a new code |
+| 403 | `permission_denied` | Any other refusal of an accepted credential | Needs a person |
+| 409 | `empty_snapshot` | `PUT /directory` would leave no active people while the hub holds some | Send `allow_empty: true` only when a person confirmed it |
+| 400 | `unexpected_field` | A row carries a key outside the allowed list | Fix the sender; nothing was applied |
+| 400 | `snapshot_too_large` | More than 20,000 people or sites | Nothing was applied |
+| 400 | `invalid_signature` | `POST /sites/{ref}/events`: the signature does not match the body | Nothing was stored |
+| 400 | `invalid_request` | The body, a parameter or a field is not what the call takes | Fix the request; repeating it unchanged will not help |
+| 404 | `not_found` | A site this credential is not for. (An address that is no call at all also answers `404`, but not with this body) | |
+| 405 | `method_not_allowed` | | |
+| 429 | `rate_limited` | Too many calls | Wait (`Retry-After`) and try again |
+
+Rows refused inside an accepted `PUT /directory` carry their own codes (`invalid_row`,
+`duplicate_reference`, `reference_in_use`); see "Pulsar Rostering and hub". Events refused inside
+an accepted batch carry a `reason` only.
 
 ## Gateway and hub (built: hub side H3, gateway side in `Pulsar-Access-Control`)
 
@@ -222,7 +256,12 @@ organisation.
 |---|---|---|
 | `PUT /api/v1/directory` | `directory:write` | The full list of people and sites |
 | `GET /api/v1/events?after=<cursor>` | `events:read` | Door and attendance events, oldest first |
-| `GET /api/v1/people`, `GET /api/v1/sites` | `directory:read` | The hub's copy (also open to Managers with a user token) |
+| `GET /api/v1/people`, `GET /api/v1/sites` | `directory:read` | The hub's copy, and for each site the hub's view of its gateway (also open to Managers with a user token) |
+
+A token for Pulsar Rostering needs `directory:write` and `events:read`. `directory:read` is
+optional: with it Rostering also shows whether each site's gateway is in contact and checks that
+what it sent is what the hub holds; without it those two calls answer `403 missing_scope` and
+everything else carries on.
 
 `PUT /api/v1/directory` is a snapshot. Sending it twice changes nothing; a missed one is repaired
 by the next.
@@ -239,13 +278,70 @@ by the next.
   inactive. Nothing is deleted.
 - Only these fields exist. Rostering must never send, and the hub has nowhere to keep, pay rates,
   bank details, dates of birth, licence numbers, phone numbers or home addresses (rule 11).
-- A snapshot with no active people while the hub holds active people is refused (`409`) unless
-  `allow_empty` is true: it would remove everyone's access at every door.
-- `403` if the organisation's directory source is the hub, and also if the token lacks the scope.
-  `200` with counts of what changed.
 - `work_email` may be `null` or left out. `is_active` on a site and `allow_empty` are optional.
-- Every refusal is `{"detail": "<one sentence>"}`. There is no machine-readable code yet, so a
-  caller cannot tell the two `403` cases apart; treat both as "needs a person".
+
+`200`:
+
+```json
+{"people_created": 0, "people_updated": 1, "people_ended": 1,
+ "sites_created": 0, "sites_updated": 0, "sites_deactivated": 0,
+ "rejected_count": 1,
+ "rejected": [{"person_ref": "<uuid>", "code": "invalid_row", "reason": "A person needs a name."}]}
+```
+
+**Each row is judged alone, and a removal is never held back by another row.** A row the hub
+cannot take is listed in `rejected` (with `person_ref` or `site_ref` as it was sent) and every other
+row is applied. A sender must read `rejected`: a `200` no longer means every row was taken.
+`rejected` holds at most 100 rows; `rejected_count` is the full number.
+
+| Row | What the hub does |
+|---|---|
+| Valid | Applied |
+| `status: ended` for a person the hub holds, anything else about the row invalid | **The person is ended.** The row is also listed in `rejected`, and the person's other details are left as they were |
+| `is_active: false` for a site the hub holds, anything else invalid | **The site is made inactive.** Listed in `rejected`; its other details are left as they were |
+| Invalid, and not such a removal (`invalid_row`: no name once cleaned, an unknown time zone, a status that is neither `active` nor `ended`, a reference that is not a UUID) | Not applied. A person or site the hub already holds under that reference is left exactly as it was: it is **not** ended or made inactive for being "missing" |
+| The same reference on two rows (`duplicate_reference`) | Neither row is applied; what the hub holds is left as it was |
+| A new reference that is already in use (`reference_in_use`: another organisation holds it) | Not created |
+
+A person or site left out of the list altogether is still ended or made inactive, as before.
+
+Refused as a whole, with nothing applied:
+
+- `400 invalid_request`: the body is not JSON, `people` or `sites` is not a list, or a row is not
+  an object.
+- `400 unexpected_field`: a row carries a key outside the lists above. Refused, not ignored, so a
+  sender that has started including more finds out before it sends something that must never
+  leave it.
+- `400 snapshot_too_large`.
+- `409 empty_snapshot`: applying the list would leave no active people while the hub holds active
+  people. It would remove everyone's access at every door, so the sender must say it means it with
+  `allow_empty: true`. Rows in `rejected` leave their people as they were, so they count as
+  whatever the hub already holds.
+- `403 directory_source_is_hub` and `403 missing_scope` (see "Refusals").
+
+`GET /api/v1/sites` (`directory:read`) lists every site with the hub's view of its gateway:
+
+```json
+[{"site_ref": "<uuid>", "name": "Main clinic", "address": "1 High St, Kew VIC 3101",
+  "timezone": "Australia/Melbourne", "is_active": true, "access_managed_elsewhere": false,
+  "gateway": {"status": "ok", "last_contact_at": "2026-11-14T05:00:10Z", "access_confirmed": true}}]
+```
+
+| `gateway.status` | Meaning |
+|---|---|
+| `none` | No gateway is paired to this site (or another system runs its doors). `last_contact_at` is `null` and `access_confirmed` is `false` |
+| `out_of_contact` | The gateway has not called for five minutes (`GATEWAY_OUT_OF_CONTACT_SECONDS`). Door events from this site will arrive late; people ended meanwhile keep their access there until it calls again |
+| `degraded` | In contact, and its last health report was not `ok` (its last call to the hub failed, or some people's access groups are not mapped at that site) |
+| `ok` | In contact and healthy |
+
+`access_confirmed` is `true` when the gateway has acknowledged the access the hub currently wants
+at that site, whatever its `status`; `false` means a change (a person added, ended or moved between
+groups) has not been confirmed at that site's doors yet. `last_contact_at` is the gateway's last
+call of any kind, to the half minute. Nothing about a door is in this answer: no door names, states
+or modes. It is read-only and tells a reader how far to trust door attendance from a site, not how
+to change anything there. `GET /api/v1/people` is the hub's copy of the people, in the shape of
+the `people` rows above; a sender can read both back to check that what it sent is what the hub
+holds.
 
 `GET /api/v1/events?after=<cursor>&limit=200&type=attendance` returns events with a cursor greater
 than `after`, oldest first:
@@ -290,4 +386,5 @@ today, and whether the two merge is an open decision (D8).
 | Gateway revoked, or its site or organisation closed | Gets `401`; stops calling; keeps its last people; doors unchanged | Stops accepting its calls | — |
 | Rostering sends nothing | — | Keeps the last copy; nothing expires | — |
 | Rostering sends an empty list by mistake | — | Refuses it (`409`); no access is removed | Shows the error; a person must act |
+| Rostering sends a list with a row the hub cannot take | — | Applies every other row and every removal; lists the row in `rejected` | Shows the rejected rows; a person fixes them. Nobody's removal waits for that |
 | Access group has no mapping at a site | Grants nothing for it; reports it in the acknowledgement | Shows the site as applied with problems, naming the people | — |

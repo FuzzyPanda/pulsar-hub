@@ -90,6 +90,14 @@ land, and update `docs/CONTRACTS.md` in the same change whenever an implementati
   carries anything else (`EVENT_DATA_KEYS` in `hub/gateways/services.py`, the directory view). That
   is how rules 2 and 11 are enforced: add a key only after deciding it can never hold a credential or
   one of the fields rule 11 names.
+- **Every `/api/v1/` refusal is `{"detail", "code"}`.** Use `hub.api.exceptions.refusal(...)` in a
+  view, or put `code=` on the `ValidationError` a service raises. A new code is added to the table
+  in `docs/CONTRACTS.md`, "Refusals", in the same change, and a code is never renamed: callers
+  branch on it.
+- **A directory snapshot is judged row by row** (`apply_rostering_snapshot`). A row the hub cannot
+  take is reported in `rejected` and leaves whoever it names untouched; a removal is applied even
+  from an otherwise bad row. Only a snapshot that is the wrong shape, carries a key outside the
+  allow-list, or would leave nobody active is refused whole.
 - **What a gateway is sent is a complete state with a version**, never a change (rule 5). Anything
   that alters who may enter a site must alter `desired_access(site)`, and nothing else may.
 - **Reaching across organisations** (`.all_organisations`, `_base_manager`, raw SQL) needs

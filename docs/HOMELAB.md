@@ -79,7 +79,10 @@ out"), and badge. The event appears on the hub's **Events** page within a poll (
 ## 4. Connect Pulsar Rostering
 
 On the hub: **Settings → Connected systems → create a token** with "Send people and sites" and
-"Read door and attendance events". It is shown once.
+"Read door and attendance events". Tick "Read people and sites" as well if Rostering should show
+whether each site's gateway is in contact and check that the hub holds what it sent; without it
+those two things are skipped and the rest works. It is shown once, and its permissions cannot be
+changed afterwards: make a new token to add one.
 
 In Rostering (`backend/applications/access/README.md` there has the detail):
 

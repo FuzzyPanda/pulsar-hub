@@ -72,7 +72,10 @@ def test_admin_creates_a_code_the_gateway_pairs_and_the_code_is_spent(client, wo
 @pytest.mark.parametrize("bad", ["", "AAAA-BBBB", "ZZZZ-ZZZZ-ZZZZ", "AAAA-BBBB-CCCC-DDDD", None, 12345])
 def test_every_bad_code_gets_the_same_answer(client, world_a, bad):
     response = pair(client, bad)
-    assert response.status_code == 403 and response.json() == {"detail": "That pairing code is not valid."}
+    assert response.status_code == 403 and response.json() == {
+        "detail": "That pairing code is not valid.",
+        "code": "pairing_code_not_valid",
+    }
     assert Gateway.all_organisations.count() == 1
 
 
@@ -500,6 +503,7 @@ def test_a_snapshot_creates_updates_and_ends_and_twice_changes_nothing(client, w
     assert first.json() == {
         "people_created": 1, "people_updated": 1, "people_ended": 0,
         "sites_created": 1, "sites_updated": 0, "sites_deactivated": 2,
+        "rejected_count": 0, "rejected": [],
     }  # fmt: skip
     # The ids are the ones Rostering minted.
     assert Person.all_organisations.get(pk=new_person).organisation_id == world_a.organisation.pk
@@ -527,40 +531,346 @@ def test_a_snapshot_that_would_end_everyone_is_refused_unless_it_says_so(client,
     empty = json.dumps({"people": [], "sites": []}).encode()
     refused = put_directory(client, world_a, empty)
     assert refused.status_code == 409 and "would end everyone" in refused.json()["detail"]
+    assert refused.json()["code"] == "empty_snapshot"
     assert Person.all_organisations.get(pk=world_a.person.pk).status == "active"
     meant = put_directory(client, world_a, json.dumps({"people": [], "sites": [], "allow_empty": True}).encode())
     assert meant.status_code == 200 and meant.json()["people_ended"] == 1
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "code"),
     [
-        {"people": [{"person_ref": "nope", "name": "X"}], "sites": []},
-        {"people": [{"person_ref": "{ref}", "name": ""}], "sites": []},
-        {"people": [{"person_ref": "{ref}", "name": "X", "status": "sacked"}], "sites": []},
-        {"people": [{"person_ref": "{ref}", "name": "X"}, {"person_ref": "{ref}", "name": "Y"}], "sites": []},
-        {"people": [{"person_ref": "{ref}", "name": "X", "date_of_birth": "1990-01-01"}], "sites": []},
-        {"people": [{"person_ref": "{ref}", "name": "X", "pay_rate": "42.50"}], "sites": []},
-        {
-            "people": [{"person_ref": "{ref}", "name": "X"}],
-            "sites": [{"site_ref": "{ref}", "name": "S", "timezone": "Nope"}],
-        },
-        {
-            "people": [{"person_ref": "{ref}", "name": "X"}],
-            "sites": [{"site_ref": "{ref}", "name": "S", "notes": "alarm 1234"}],
-        },
-        {"people": "everyone", "sites": []},
-        {"sites": []},
+        ({"people": [{"person_ref": "{ref}", "name": "X", "date_of_birth": "1990-01-01"}], "sites": []}, "unexpected_field"),
+        ({"people": [{"person_ref": "{ref}", "name": "X", "pay_rate": "42.50"}], "sites": []}, "unexpected_field"),
+        (
+            {
+                "people": [{"person_ref": "{ref}", "name": "X"}],
+                "sites": [{"site_ref": "{ref}", "name": "S", "notes": "alarm 1234"}],
+            },
+            "unexpected_field",
+        ),
+        ({"people": "everyone", "sites": []}, "invalid_request"),
+        ({"sites": []}, "invalid_request"),
+        ({"people": ["Sam"], "sites": []}, "invalid_request"),
+        ([], "invalid_request"),
     ],
-)
-def test_a_bad_snapshot_is_refused_whole(client, world_a, body):
-    """Including one that carries a field the hub must never hold (rule 11): refused, not ignored."""
+)  # fmt: skip
+def test_a_bad_snapshot_is_refused_whole(client, world_a, body, code):
+    """A snapshot that is not the contract's shape, or that carries a field the hub must never
+    hold (rule 11), is refused whole: refused, not ignored, and not judged row by row."""
     rostering_world(world_a)
     ref = str(uuid.uuid4())
     before = list(Person.all_organisations.values()), list(Site.all_organisations.values())
     response = put_directory(client, world_a, json.dumps(body).replace("{ref}", ref).encode())
-    assert response.status_code == 400
+    assert response.status_code == 400 and response.json()["code"] == code
     assert (list(Person.all_organisations.values()), list(Site.all_organisations.values())) == before
+
+
+def test_a_body_that_is_not_json_and_a_snapshot_that_is_too_large_are_refused_whole(client, world_a, monkeypatch):
+    rostering_world(world_a)
+    not_json = put_directory(client, world_a, b"{people")
+    assert not_json.status_code == 400 and not_json.json()["code"] == "invalid_request"
+    monkeypatch.setattr(directory, "MAX_SNAPSHOT_ROWS", 1)
+    people = [{"person_ref": str(uuid.uuid4()), "name": "X"} for _ in range(2)]
+    too_large = put_directory(client, world_a, json.dumps({"people": people, "sites": []}).encode())
+    assert too_large.status_code == 400 and too_large.json()["code"] == "snapshot_too_large"
+    assert Person.all_organisations.get(pk=world_a.person.pk).status == "active"
+
+
+def kept(world) -> dict:
+    """The world's own person and site as Rostering would send them, unchanged."""
+    return {
+        "people": [
+            {
+                "person_ref": str(world.person.pk),
+                "name": world.person.name,
+                "work_email": world.person.work_email,
+                "status": "active",
+            }
+        ],
+        "sites": [
+            {"site_ref": str(site.pk), "name": site.name, "address": site.address, "timezone": site.timezone}
+            for site in Site.all_organisations.filter(organisation=world.organisation)
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("row", "reason"),
+    [
+        ({"person_ref": "{new}", "name": "   "}, "A person needs a name."),
+        ({"person_ref": "{new}", "name": "​​"}, "A person needs a name."),
+        ({"person_ref": "{new}", "name": 42}, "A person's name must be text."),
+        ({"person_ref": "{new}", "name": "X", "status": "sacked"}, "A person's status must be active or ended."),
+        ({"person_ref": "{new}", "name": "X", "work_email": ["a@b.test"]}, "A person's work_email must be text."),
+        ({"person_ref": "not-a-uuid", "name": "X"}, "person_ref is not a UUID."),
+        ({"name": "X"}, "person_ref is not a UUID."),
+    ],
+)
+def test_a_row_the_hub_cannot_take_is_reported_and_every_other_row_is_applied(client, world_a, row, reason):
+    """H2 of Rostering's review: one bad row must not hold back the rest of the list."""
+    rostering_world(world_a)
+    new, other = str(uuid.uuid4()), str(uuid.uuid4())
+    bad = json.loads(json.dumps(row).replace("{new}", new))
+    body = kept(world_a)
+    body["people"] += [bad, {"person_ref": other, "name": "Taken On", "status": "active"}]
+    response = put_directory(client, world_a, json.dumps(body).encode())
+    assert response.status_code == 200, response.content
+    data = response.json()
+    assert data["people_created"] == 1 and data["rejected_count"] == 1
+    assert data["rejected"] == [
+        {"person_ref": bad.get("person_ref", ""), "code": "invalid_row", "reason": reason}
+    ]  # fmt: skip
+    assert Person.all_organisations.filter(pk=other).exists()
+    assert not Person.all_organisations.filter(pk=new).exists()
+    assert Person.all_organisations.get(pk=world_a.person.pk).status == "active"
+
+
+def test_a_removal_is_never_held_back_by_a_bad_row(client, world_a):
+    """The point of judging rows alone: the rows that end people are how access is removed at
+    every door. Before, one unrelated bad name refused the list and the leaver kept their access."""
+    rostering_world(world_a)
+    with organisation_context(world_a.organisation):
+        leaver = f.PersonFactory(organisation=world_a.organisation, name="Leaver", work_email="leaver@example.test")
+        gone = f.PersonFactory(organisation=world_a.organisation, name="Gone")
+    body = kept(world_a)
+    body["people"] += [
+        {"person_ref": str(uuid.uuid4()), "name": "", "status": "active"},  # the unrelated bad row
+        # A removal whose own row is otherwise unacceptable: the removal is applied, nothing else.
+        {"person_ref": str(leaver.pk), "name": "", "work_email": "changed@example.test", "status": "ended"},
+        # `gone` is left out altogether: ended, as before.
+    ]
+    response = put_directory(client, world_a, json.dumps(body).encode())
+    assert response.status_code == 200
+    data = response.json()
+    assert data["people_ended"] == 2 and data["rejected_count"] == 2
+    ended_row = next(r for r in data["rejected"] if r["person_ref"] == str(leaver.pk))
+    assert ended_row["code"] == "invalid_row" and "The person was ended" in ended_row["reason"]
+    leaver = Person.all_organisations.get(pk=leaver.pk)
+    assert (leaver.status, leaver.name, leaver.work_email) == ("ended", "Leaver", "leaver@example.test")
+    assert leaver.ended_at is not None
+    assert Person.all_organisations.get(pk=gone.pk).status == "ended"
+    # The gateway is told on its next pull.
+    assert AuditEvent.all_organisations.get(action="directory.snapshot_applied").data["rows_rejected"] == 2
+
+    # Sent again unchanged: nothing more changes, and the rejected rows are listed again.
+    again = put_directory(client, world_a, json.dumps(body).encode())
+    assert again.json()["people_ended"] == 0 and again.json()["rejected_count"] == 2
+    assert AuditEvent.all_organisations.filter(action="directory.snapshot_applied").count() == 1
+
+
+def test_a_rejected_row_leaves_whoever_it_names_exactly_as_they_were(client, world_a):
+    """Named by a row the hub could not take is not "missing from the list": the person is neither
+    updated nor ended, and the same for a site."""
+    rostering_world(world_a)
+    body = kept(world_a)
+    body["people"][0] |= {"name": "", "work_email": "new@example.test"}
+    body["sites"][0] |= {"name": "Renamed", "timezone": "Mars/Olympus"}
+    site_ref = body["sites"][0]["site_ref"]
+    with organisation_context(world_a.organisation):
+        f.PersonFactory(
+            organisation=world_a.organisation, name="Someone Else"
+        )  # so the list still has an active person besides
+    body["people"].append({"person_ref": str(uuid.uuid4()), "name": "Someone New"})
+    before_person = Person.all_organisations.filter(pk=world_a.person.pk).values().get()
+    before_site = Site.all_organisations.filter(pk=site_ref).values().get()
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    assert {(r.get("person_ref") or r.get("site_ref"), r["code"]) for r in data["rejected"]} == {
+        (str(world_a.person.pk), "invalid_row"),
+        (site_ref, "invalid_row"),
+    }
+    assert Person.all_organisations.filter(pk=world_a.person.pk).values().get() == before_person
+    assert Site.all_organisations.filter(pk=site_ref).values().get() == before_site
+    assert data["sites_deactivated"] == 0 and data["sites_updated"] == 0
+
+
+def test_a_site_is_made_inactive_even_when_the_rest_of_its_row_is_bad(client, world_a):
+    rostering_world(world_a)
+    body = kept(world_a)
+    body["sites"][0] |= {"name": "", "is_active": False}
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    site = Site.all_organisations.get(pk=body["sites"][0]["site_ref"])
+    assert not site.is_active and site.name  # inactive, and still carrying its old name
+    assert data["sites_deactivated"] == 1 and "made inactive" in data["rejected"][0]["reason"]
+    # is_active that is neither true nor false is not a removal: the site is left as it was.
+    body = kept(world_a)
+    body["sites"][1] |= {"is_active": "no"}
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    assert data["rejected"][-1]["reason"] == "A site's is_active must be true or false."
+    assert Site.all_organisations.get(pk=body["sites"][1]["site_ref"]).is_active
+
+
+def test_a_reference_sent_twice_is_refused_for_both_rows_and_changes_nobody(client, world_a):
+    rostering_world(world_a)
+    body = kept(world_a)
+    body["people"].append(body["people"][0] | {"name": "A Second Name", "status": "ended"})
+    with organisation_context(world_a.organisation):
+        f.PersonFactory(organisation=world_a.organisation, name="Someone Else")
+    body["people"].append({"person_ref": str(uuid.uuid4()), "name": "Someone New"})
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    assert [r for r in data["rejected"] if r["code"] == "duplicate_reference"] == [
+        {
+            "person_ref": str(world_a.person.pk),
+            "code": "duplicate_reference",
+            "reason": "This person_ref appears more than once in the list.",
+        }
+    ]
+    person = Person.all_organisations.get(pk=world_a.person.pk)
+    assert (person.status, person.name) == ("active", world_a.person.name)
+
+
+def test_rejected_rows_cannot_be_used_to_end_everyone_and_do_not_hide_that_a_list_would(client, world_a):
+    """The guard is on the outcome. Rows the hub refuses leave their people as they were, so they
+    neither count as "sent active" for someone new nor as an ending for someone held."""
+    rostering_world(world_a)
+    # Everyone held is left out, and the only "active" row is one the hub cannot take: nobody
+    # would be left active, so this is still the empty snapshot.
+    body = {"people": [{"person_ref": str(uuid.uuid4()), "name": "", "status": "active"}], "sites": []}
+    refused = put_directory(client, world_a, json.dumps(body).encode())
+    assert refused.status_code == 409 and refused.json()["code"] == "empty_snapshot"
+    assert Person.all_organisations.get(pk=world_a.person.pk).status == "active"
+    assert Site.all_organisations.get(pk=world_a.site.pk).is_active  # nothing was applied
+    # The only person held is named by a row the hub cannot take: they stay active, so nothing
+    # is ended and there is nothing to refuse.
+    body = kept(world_a)
+    body["people"][0]["name"] = ""
+    accepted = put_directory(client, world_a, json.dumps(body).encode())
+    assert accepted.status_code == 200 and accepted.json()["people_ended"] == 0
+    assert Person.all_organisations.get(pk=world_a.person.pk).status == "active"
+
+
+def test_at_most_a_hundred_rejected_rows_are_listed_and_the_count_is_exact(client, world_a):
+    rostering_world(world_a)
+    body = kept(world_a)
+    body["people"] += [{"person_ref": str(uuid.uuid4()), "name": ""} for _ in range(130)]
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    assert data["rejected_count"] == 130 and len(data["rejected"]) == 100
+
+
+# --- what a service may read about a site's gateway (H3 of Rostering's review) ---------------------
+
+
+def site_rows(client, world) -> dict:
+    response = client.get(reverse("api_sites"), **service_headers(world))
+    assert response.status_code == 200
+    return {row["site_ref"]: row for row in response.json()}
+
+
+def test_sites_carry_the_hubs_view_of_each_gateway_and_nothing_about_a_door(client, world_a, settings):
+    rows = site_rows(client, world_a)
+    paired, unpaired = rows[str(world_a.site.pk)], rows[str(world_a.pairing_code.site_id)]
+    assert set(paired) == {
+        "site_ref", "name", "address", "timezone", "is_active", "access_managed_elsewhere", "gateway",
+    }  # fmt: skip
+    assert unpaired["gateway"] == {"status": "none", "last_contact_at": None, "access_confirmed": False}
+    # In contact, nothing reported, access not yet acknowledged.
+    assert set(paired["gateway"]) == {"status", "last_contact_at", "access_confirmed"}
+    assert paired["gateway"]["status"] == "ok" and paired["gateway"]["access_confirmed"] is False
+    seen = Gateway.all_organisations.get(pk=world_a.gateway.pk).last_seen_at
+    assert paired["gateway"]["last_contact_at"] == seen.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # The fixture's gateway reported a door; none of it may leave by this call (no door names,
+    # states or modes: this says how far to trust attendance from a site, not what a door does).
+    assert "front door" not in json.dumps(rows) and "locked" not in json.dumps(rows)
+
+    # Acknowledging the current access confirms it; a change in the hub unconfirms it again.
+    version = get_access(client, world_a).json()["version"]
+    call_gateway(client, "api_gateway_access_ack", world_a, world_a, {"version": version, "failures": []})
+    assert site_rows(client, world_a)[str(world_a.site.pk)]["gateway"]["access_confirmed"] is True
+    with organisation_context(world_a.organisation):
+        directory.end_person(world_a.person, actor=actor(world_a, "manager"))
+    assert site_rows(client, world_a)[str(world_a.site.pk)]["gateway"]["access_confirmed"] is False
+
+    # What the gateway says about itself, then silence.
+    for reported, expected in (("degraded", "degraded"), ("ok", "ok"), ("something new", "degraded")):
+        state = {"doors": [], "health": {"status": reported, "detail": "", "queued_events": 3}}
+        assert call_gateway(client, "api_gateway_state", world_a, world_a, state).status_code == 204
+        assert site_rows(client, world_a)[str(world_a.site.pk)]["gateway"]["status"] == expected
+    with organisation_context(world_a.organisation):
+        Gateway.objects.update(
+            last_seen_at=timezone.now() - timezone.timedelta(seconds=settings.GATEWAY_OUT_OF_CONTACT_SECONDS + 5)
+        )
+    silent = site_rows(client, world_a)[str(world_a.site.pk)]["gateway"]
+    assert silent["status"] == "out_of_contact" and silent["last_contact_at"] is not None
+
+
+def test_a_revoked_gateway_and_a_site_run_by_another_system_have_no_gateway(client, world_a):
+    with organisation_context(world_a.organisation):
+        gateways.revoke_gateway(world_a.gateway, actor=actor(world_a, "admin"))
+    assert site_rows(client, world_a)[str(world_a.site.pk)]["gateway"]["status"] == "none"
+    with organisation_context(world_a.organisation):
+        directory.set_access_managed_elsewhere(world_a.site, actor=actor(world_a, "admin"), elsewhere=True)
+    row = site_rows(client, world_a)[str(world_a.site.pk)]
+    assert row["access_managed_elsewhere"] is True and row["gateway"]["status"] == "none"
+
+
+def test_reading_sites_costs_the_same_however_many_have_no_gateway(client, world_a, django_assert_max_num_queries):
+    with organisation_context(world_a.organisation):
+        for n in range(20):
+            f.SiteFactory(organisation=world_a.organisation, name=f"Unpaired {n}")
+    client.get(reverse("api_sites"), **service_headers(world_a))  # the token's last-used time is set now
+    with django_assert_max_num_queries(12):
+        assert len(site_rows(client, world_a)) == 22
+
+
+# --- every refusal carries a code (H1 of Rostering's review) ---------------------------------------
+
+
+def test_every_refusal_of_a_service_call_says_why_in_a_code(client, world_a):
+    from hub.api.models import ServiceToken
+
+    def refused(response, status, code):
+        assert response.status_code == status, response.content
+        body = response.json()
+        assert set(body) == {"detail", "code"} and body["code"] == code and body["detail"]
+
+    url = reverse("api_directory")
+    put = lambda body, **headers: client.put(url, data=body, content_type="application/json", **headers)  # noqa: E731
+    # No credential, and one nothing recognises.
+    refused(put(directory_body(world_a)), 401, "not_authenticated")
+    refused(put(directory_body(world_a), HTTP_AUTHORIZATION="Bearer hubsvc_wrong"), 401, "token_not_accepted")
+    refused(put(directory_body(world_a), **gateway_headers(world_a)), 401, "token_not_accepted")
+    # The two 403s a caller could not tell apart before.
+    refused(put_directory(client, world_a, directory_body(world_a)), 403, "directory_source_is_hub")
+    rostering_world(world_a)
+    with organisation_context(world_a.organisation):
+        ServiceToken.objects.update(scopes=["events:read"])
+    missing = put_directory(client, world_a, directory_body(world_a))
+    refused(missing, 403, "missing_scope")
+    assert "directory:write" in missing.json()["detail"]
+    refused(client.get(reverse("api_sites"), **service_headers(world_a)), 403, "missing_scope")
+    # ...and a token that lacks one scope still works for the ones it has.
+    assert client.get(reverse("api_events"), **service_headers(world_a)).status_code == 200
+    refused(client.get(f"{reverse('api_events')}?after=abc", **service_headers(world_a)), 400, "invalid_request")
+    refused(client.post(reverse("api_events"), **service_headers(world_a)), 405, "method_not_allowed")
+    with organisation_context(world_a.organisation):
+        ServiceToken.objects.update(revoked_at=timezone.now())
+    refused(client.get(reverse("api_events"), **service_headers(world_a)), 401, "token_not_accepted")
+
+
+def test_every_refusal_of_a_gateway_call_says_why_in_a_code(client, world_a, world_b):
+    def refused(response, status, code):
+        assert response.status_code == status, response.content
+        assert response.json()["code"] == code and response.json()["detail"]
+
+    access = reverse("api_gateway_access", kwargs={"site_ref": world_a.site.pk})
+    refused(client.get(access), 401, "not_authenticated")
+    refused(client.get(access, HTTP_AUTHORIZATION="Bearer hubgw_wrong"), 401, "token_not_accepted")
+    refused(call_gateway(client, "api_gateway_access", world_a, world_b), 404, "not_found")
+    refused(call_gateway(client, "api_gateway_access_ack", world_a, world_a, {"version": "x"}), 400, "invalid_request")
+    refused(call_gateway(client, "api_gateway_state", world_a, world_a, {"doors": "all"}), 400, "invalid_request")
+    url = reverse("api_gateway_events", kwargs={"site_ref": world_a.site.pk})
+    unsigned = client.post(url, data=b'{"events": []}', content_type="application/json", **gateway_headers(world_a))
+    refused(unsigned, 400, "invalid_signature")
+
+
+def test_a_user_token_refusal_says_the_role_is_too_low(client, world_a):
+    from tests.isolation.test_api import token_for
+
+    headers = token_for(world_a, "staff")
+    response = client.get(reverse("api_members"), **headers)
+    assert response.status_code == 403 and response.json()["code"] == "role_too_low"
+    assert client.get(reverse("api_sites"), **headers).json()["code"] == "role_too_low"
+    assert client.get(reverse("api_me"), HTTP_AUTHORIZATION="Bearer nonsense").json()["code"] == "token_not_accepted"
 
 
 def test_rostering_follows_the_event_stream_with_a_cursor(client, world_a):
