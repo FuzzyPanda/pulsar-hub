@@ -32,6 +32,7 @@ from hub.gateways.models import Gateway
 from hub.organisations.context import organisation_context, require_organisation
 from hub.organisations.models import Membership, Role, hash_token
 from hub.organisations.services import Actor
+from hub.products.addresses import browser_host
 
 logger = logging.getLogger("hub.console")
 
@@ -189,7 +190,7 @@ def open_session(gateway: Gateway, *, actor: Actor, request) -> tuple[ConsoleSes
                     gateway=gateway,
                     user=user,
                     role=actor.membership.role,
-                    origin=console_origin(gateway, host=request.get_host().rsplit(":", 1)[0]),
+                    origin=console_origin(gateway, host=browser_host(request)),
                     expires_at=now + timedelta(minutes=settings.CONSOLE_SESSION_MINUTES),
                     token_hash=hash_token(token),
                     handoff_expires_at=now + timedelta(seconds=HANDOFF_SECONDS),
