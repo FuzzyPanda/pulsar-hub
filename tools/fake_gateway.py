@@ -552,10 +552,10 @@ class FakeGateway:
             except (TimeoutError, aiohttp.ClientError, OSError) as exc:
                 logger.warning("could not connect: %s", exc)
             failures = 0 if time.monotonic() - started > 60 else failures + 1
-            delay = min(300, 2 ** max(failures - 1, 0))
+            delay = min(300, 2 ** max(failures - 1, 0)) * random.uniform(0.5, 1)  # jitter, not a secret
             if self.close_code == 4001:
-                delay = max(delay, 30)
-            await asyncio.sleep(delay * random.uniform(0.5, 1))  # jitter, not a secret
+                delay = max(delay, 30)  # replaced by another instance: never sooner than this
+            await asyncio.sleep(delay)
 
 
 async def pair(hub_url: str, code: str, name: str) -> dict:

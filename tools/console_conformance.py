@@ -545,7 +545,7 @@ class Conformance:
             waited = time.monotonic() - mark
             self.check(
                 "after 4001 (replaced) the gateway waits at least 30 seconds",
-                successor is not None and waited >= 29,
+                successor is not None and waited >= 30,
                 f"reconnected after {waited:.0f} s",
                 fail="no reconnection within 90 seconds" if successor is None else f"reconnected after {waited:.0f} s",
             )

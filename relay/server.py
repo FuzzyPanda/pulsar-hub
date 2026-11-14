@@ -571,7 +571,10 @@ class Relay:
         if tunnel is None or tunnel.closed:
             return self._no_session(request)
 
-        path = request.raw_path if request.raw_path.startswith("/") else "/"
+        path = request.raw_path
+        if not path.startswith("/") or path.startswith("//") or any(ch <= " " or ch == "\x7f" for ch in path):
+            # Only ever a path on the console. The gateway checks this too; it is its decision in the end.
+            return pages.refused("Not found", "There is nothing at this address.", status=404)
         headers = protocol.request_headers_for_gateway(
             request.headers.items(),
             cookie_header=session.jar.header_for(request.path),

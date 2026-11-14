@@ -546,6 +546,29 @@ async def test_a_request_from_another_site_is_refused_before_it_reaches_the_gate
 
 
 @async_test
+async def test_only_a_path_on_the_console_is_ever_sent_to_a_gateway():
+    """A request line that names another host, or begins with two slashes, goes nowhere. The
+    gateway makes the same check, and it is the gateway that decides what a path reaches."""
+    async with Bench() as bench:
+        gateway = await bench.gateway("a")
+        browser = await bench.browser(gateway)
+        cookie = "; ".join(f"{name}={value}" for name, value in browser.cookies.items())
+        before = len(gateway.console.seen)
+        for target in ("//evil.example/ui/", "http://169.254.169.254/latest/", "evil.example:22"):
+            reader, writer = await asyncio.open_connection("127.0.0.1", bench.ports["console"])
+            host = bench.console_origin.removeprefix("http://")
+            writer.write(
+                f"GET {target} HTTP/1.1\r\nHost: {host}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n".encode()
+            )
+            await writer.drain()
+            status_line = (await reader.readline()).decode()
+            writer.close()
+            assert status_line.split()[1] in ("400", "404"), (target, status_line)
+        assert len(gateway.console.seen) == before
+        assert (await browser.get("/ui/")).status == 200
+
+
+@async_test
 async def test_the_relays_own_paths_are_never_sent_to_a_gateway():
     async with Bench() as bench:
         gateway = await bench.gateway("a")
