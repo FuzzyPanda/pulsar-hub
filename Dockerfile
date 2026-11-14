@@ -26,6 +26,9 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app manage.py ./
 COPY --chown=app:app hub ./hub
+# The remote-console relay runs from the same image as a third role (`relay`). It imports no
+# Django and is given no database address; the web service imports only its settings rules.
+COPY --chown=app:app relay ./relay
 COPY --chown=app:app docker/entrypoint.sh ./docker/entrypoint.sh
 
 # collectstatic needs settings to load, but reads no database. The values below exist only for
@@ -41,7 +44,7 @@ RUN mkdir -p /app/staticfiles \
     && chown -R app:app /app/staticfiles
 
 USER app
-EXPOSE 8000
+EXPOSE 8000 8001 8002 8003
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["web"]

@@ -16,7 +16,9 @@ together and how to add a product.
 | Addresses | `hub/products/addresses.py` | Checking what was typed, and building each link |
 
 A connected app holds no secret. The address is a link the person's own browser follows, and the
-product keeps its own sign-in. The hub never calls a product or a gateway (rule 3 in `CLAUDE.md`).
+product keeps its own sign-in. The hub never calls a product, and never calls or links to a gateway
+(rule 3 in `CLAUDE.md`): a gateway's console is reached down a connection the gateway itself keeps
+open to the hub.
 
 **Who sees what.** A member sees the connected products their role may use. An Owner also sees
 the rest of the catalogue, marked "Not connected" (or "Turned off"), with a link to Settings. A
@@ -39,11 +41,15 @@ Hub" (see `CONTRACTS.md`, "Opening a product from the hub"). Setting a connectio
 
 **Two kinds of product.** Most products live at one address per organisation (`kind=ADDRESS`, the
 default). Pulsar Access Control lives at each site (`kind=SITES`): its connection holds no
-address, and its tile lists every site whose gateway has a **console address**, which an Admin
-sets on the site's page (`Gateway.console_address`, `gateways.services.set_console_address`,
-audited as `gateway.console_address_changed`). With none set, the tile says what to do; it never
-shows a link that leads nowhere. The gateway's console is reached from the site's own network and
-asks for its own sign-in; the hub is not in that path.
+address, and its tile lists every site that has a paired gateway, with where that gateway's
+**remote console** stands, in words: available, switched off on the gateway, gateway not
+connected, or gateway software too old. For an Owner or an Admin an available console has an
+**Open** button. It is a form, not a link: it posts to the hub, which asks for the authenticator
+app or a passkey, starts a short session and opens the gateway's console in a new tab, on a
+separate console address, relayed down the connection the gateway keeps open to the hub
+(`hub/console/`, `relay/`; `CONTRACTS.md`, "Remote console"). The tile never shows an address on a
+site's own network: that was the console-address link of 2026-11-13, removed the next day on the
+owner's decision. With no gateway paired, the tile says what to do.
 
 ## Adding a product
 
@@ -84,8 +90,9 @@ Two steps. No migration, no new view and no new template.
 Update `tests/test_products.py::test_catalogue_lists_rostering_and_access_control` in the same
 change: it pins the catalogue's keys so that a product cannot appear or vanish by accident.
 
-A product that every site has its own copy of takes `kind=SITES` instead, and needs the per-site
-address to come from somewhere; today only gateways have one.
+A product that every site has its own copy of takes `kind=SITES` instead. Today that means a
+gateway's remote console, and `_site_consoles` in `hub/products/services.py` is written for that
+alone.
 
 Retiring a product: remove its entry. Rows that still name it are ignored by the launcher and are
 listed in Settings as "Retired" so an Owner can disconnect them.

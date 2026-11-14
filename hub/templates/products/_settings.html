@@ -22,7 +22,7 @@
               <div><dt>Launch path</dt><dd class="mono">{% if row.app.launch_path %}{{ row.app.launch_path }}{% else %}{{ row.product.launch_path }} <span class="muted">(default)</span>{% endif %}</dd></div>
               <div><dt>Opens</dt><dd class="mono">{% if row.preview %}{{ row.preview }}{% else %}<span class="muted">Nothing: the address needs attention</span>{% endif %}</dd></div>
             {% else %}
-              <div><dt>Addresses</dt><dd>One per site. An Admin sets each gateway's console address on its <a href="{% url 'site_list' org_slug=organisation.slug %}">site page</a>.</dd></div>
+              <div><dt>Opens</dt><dd>Each site's gateway, through its remote console. Owners and Admins open it from the Apps launcher or the <a href="{% url 'site_list' org_slug=organisation.slug %}">site page</a>.</dd></div>
             {% endif %}
             <div><dt>Connected</dt><dd>{{ row.app.connected_at|date:"j M Y, H:i" }} UTC{% if row.app.connected_by %} by {{ row.app.connected_by.display_name }}{% endif %}</dd></div>
           </dl>
@@ -56,7 +56,7 @@
                 {% if row.needs_address %}
                   {% include "products/_address_fields.html" with product=row.product app=None prefix="connect" %}
                 {% else %}
-                  <p class="hint">Nothing to enter here. After connecting, an Admin sets each gateway's console address on its site page.</p>
+                  <p class="hint">Nothing to enter here. After connecting, each site with a paired gateway is listed, with where its remote console stands.</p>
                 {% endif %}
                 <div class="actions"><button class="btn" type="submit">Connect<span class="visually-hidden"> {{ row.product.name }}</span></button></div>
               </form>

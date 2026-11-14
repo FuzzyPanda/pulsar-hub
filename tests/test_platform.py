@@ -132,8 +132,10 @@ def test_housekeeping_schedules_are_idempotent_and_runnable():
     assert sorted(Schedule.objects.values_list("name", flat=True)) == [
         "clear-expired-oauth-tokens",
         "clear-expired-sessions",
+        "sweep-console-sessions",
     ]
-    # What the worker will execute: both commands exist and run.
+    assert Schedule.objects.get(name="sweep-console-sessions").schedule_type == Schedule.MINUTES
+    # What the worker will execute: every command exists and runs.
     for schedule in Schedule.objects.all():
         assert schedule.func == "django.core.management.call_command"
         call_command(eval(schedule.args), stdout=io.StringIO())  # noqa: S307

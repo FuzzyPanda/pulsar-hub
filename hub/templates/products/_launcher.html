@@ -20,12 +20,18 @@
           <p class="muted">{{ tile.product.summary }}</p>
           {% if tile.note %}<p class="small">{{ tile.note }}</p>{% endif %}
           <div class="app-tile__actions">
-            {% if tile.links and tile.product.kind == "sites" %}
+            {% if tile.sites %}
+              {# One row per site. "Open" posts to the hub, which asks for a step-up check and then opens the remote console in a new tab. #}
               <ul class="app-tile__links">
-                {% for link in tile.links %}
+                {% for row in tile.sites %}
                   <li>
-                    <span>{{ link.label }}</span>
-                    <a class="btn btn-sm" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">Open<span class="visually-hidden"> the door controller console at {{ link.label }} (opens in a new tab)</span></a>
+                    <span><a href="{{ row.site_url }}">{{ row.label }}</a><br><span class="muted small">Remote console: {{ row.state_label|lower }}</span></span>
+                    {% if row.open_url %}
+                      <form method="post" action="{{ row.open_url }}" target="_blank" rel="noopener">
+                        {% csrf_token %}
+                        <button class="btn btn-sm" type="submit">Open<span class="visually-hidden"> the remote console at {{ row.label }} (opens in a new tab)</span></button>
+                      </form>
+                    {% endif %}
                   </li>
                 {% endfor %}
               </ul>

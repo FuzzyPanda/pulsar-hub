@@ -4,5 +4,26 @@
 }
 
 :80 {
-	reverse_proxy web:8000
+	# The relay's internal channel (web and relay talk over the Docker network) is never served.
+	handle /internal/* {
+		respond 404
+	}
+
+	# A gateway's remote-console tunnel: a WebSocket the gateway opens. The relay holds it.
+	handle /api/v1/gateways/tunnel {
+		reverse_proxy relay:8001
+	}
+
+	handle {
+		reverse_proxy web:8000
+	}
+}
+
+# Bench only: every gateway's remote console, on one extra port. The relay refuses to serve this
+# way unless the plain-HTTP lab flag is on (INSECURE_COOKIES). Production gives each gateway its
+# own host name on a separate domain instead (Caddyfile.prod).
+:8081 {
+	reverse_proxy relay:8002 {
+		flush_interval -1
+	}
 }

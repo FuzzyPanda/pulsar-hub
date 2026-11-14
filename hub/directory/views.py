@@ -1,5 +1,6 @@
 """Console pages for people and sites. Thin: reads through the scoped managers, writes through services."""
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
@@ -8,6 +9,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from hub.access.models import AccessGroup, AccessGroupMember
 from hub.accounts.stepup import step_up_required
+from hub.console import services as console
 from hub.directory import services
 from hub.directory.models import Person, Site
 from hub.gateways import services as gateways
@@ -16,7 +18,6 @@ from hub.gateways.views import site_sync_status
 from hub.organisations.models import Organisation, Role
 from hub.organisations.services import Actor
 from hub.organisations.views import _flash_errors, role_required
-from hub.products.addresses import resolve_address
 
 ERRORS = (ValidationError, PermissionDenied, ValueError)
 
@@ -69,8 +70,11 @@ def site_detail(request, org_slug: str, site_id):
         "on_site": gateways.people_on_site(site),
         "doors": (gateway.state or {}).get("doors", []) if gateway else [],
         "health": (gateway.state or {}).get("health", {}) if gateway else {},
-        # The gateway's own console, as a link for the person's browser. Empty when none is set.
-        "console_url": resolve_address(gateway.console_address, host="") if gateway else "",
+        # The gateway's remote console: where it stands, in words, and the sessions open now.
+        "console": console.describe(gateway) if gateway else None,
+        "console_sessions": console.live_sessions(gateway) if gateway and actor.has_role(Role.ADMIN) else [],
+        "can_open_console": bool(gateway) and actor.is_member_with(Role.ADMIN),
+        "console_minutes": settings.CONSOLE_SESSION_MINUTES,
         "recent_events": GatewayEvent.objects.filter(site=site).select_related("person")[:25],
         "hub_owned": _hub_owned(request),
         "can_edit": actor.is_member_with(Role.ADMIN),

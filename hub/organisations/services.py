@@ -294,7 +294,7 @@ def reactivate_organisation(organisation: Organisation, *, operator, request=Non
 
 
 # Never exported: values that would let the reader act as someone.
-_EXPORT_EXCLUDED_FIELDS = frozenset({"token_hash", "password", "secret", "token"})
+_EXPORT_EXCLUDED_FIELDS = frozenset({"token_hash", "password", "secret", "token", "cookie_hash", "browser_hash"})
 
 
 def _scoped_models():
@@ -574,6 +574,13 @@ def accept_invitation(invitation: Invitation, *, user, request=None) -> Membersh
     return membership
 
 
+def _end_console_sessions(user, *, request=None, ended_by=None) -> None:
+    """A remote console session never outlives a change to the membership it was opened under."""
+    from hub.console import services as console
+
+    console.end_for_member(user, request=request, ended_by=ended_by)
+
+
 def _active_owner_count() -> int:
     return Membership.objects.filter(role=Role.OWNER, is_active=True).count()
 
@@ -596,6 +603,7 @@ def change_role(membership: Membership, *, actor: Actor, new_role: str, request=
     membership.save(update_fields=["role", "updated_at"])
     # Tokens carry the role as a claim; make clients fetch fresh ones.
     revoke_tokens(organisation=membership.organisation, user=membership.user)
+    _end_console_sessions(membership.user, request=request, ended_by=actor.user)
     _audit(
         actor,
         "member.role_changed",
@@ -620,6 +628,7 @@ def remove_member(membership: Membership, *, actor: Actor, request=None) -> None
     membership.is_active = False
     membership.save(update_fields=["is_active", "updated_at"])
     revoke_tokens(organisation=membership.organisation, user=membership.user)
+    _end_console_sessions(membership.user, request=request, ended_by=actor.user)
     _audit(
         actor,
         "member.left" if is_self else "member.removed",
