@@ -1,4 +1,4 @@
-"""The product launcher: the catalogue, connected apps, gateway console addresses, and the
+"""The product launcher: the catalogue, connected apps, the Access Control tile, and the
 recovery codes page that used to leave a new user with nowhere to go."""
 
 import re
@@ -114,7 +114,7 @@ def test_base_addresses_that_are_refused(typed):
         clean_base_address(typed)
 
 
-def test_a_gateway_console_address_cannot_use_the_host_placeholder():
+def test_an_address_can_be_required_to_name_its_host():
     with pytest.raises(ValidationError):
         clean_base_address("https://{host}/ui/", allow_host_placeholder=False)
     assert clean_base_address("https://192.168.1.211/ui/", allow_host_placeholder=False) == "https://192.168.1.211/ui/"
@@ -257,8 +257,6 @@ def test_a_visiting_operator_cannot_connect_an_app(world_a):
     with organisation_context(world_a.organisation):
         with pytest.raises(PermissionDenied):
             services.connect_app(actor=visiting, product_key="access_control")
-        with pytest.raises(PermissionDenied):
-            gateway_services.set_console_address(world_a.gateway, actor=visiting, address="https://x.example.test")
 
 
 def test_connecting_refuses_bad_input(world_a):
@@ -287,56 +285,12 @@ def test_each_organisation_connects_the_same_product_separately(world_a, world_b
     assert a.product_key == b.product_key == "rostering" and a.base_address != b.base_address
 
 
-# --- the gateway's console address ----------------------------------------------------------------
-
-
-def test_an_admin_sets_and_clears_a_gateway_console_address(world_a):
-    admin = actor(world_a, "admin")
-    with organisation_context(world_a.organisation):
-        gateway = world_a.gateway
-        gateway_services.set_console_address(gateway, actor=admin, address=" https://192.168.1.211/ui/ ")
-        assert Gateway.objects.get(pk=gateway.pk).console_address == "https://192.168.1.211/ui/"
-        for bad in ("https://{host}/ui/", "192.168.1.211", "ftp://192.168.1.211", "https://a:b@192.168.1.211/"):
-            with pytest.raises(ValidationError):
-                gateway_services.set_console_address(gateway, actor=admin, address=bad)
-        with pytest.raises(PermissionDenied):
-            gateway_services.set_console_address(gateway, actor=actor(world_a, "manager"), address="")
-        gateway_services.set_console_address(gateway, actor=admin, address="")
-        assert Gateway.objects.get(pk=gateway.pk).console_address == ""
-        gateway_services.revoke_gateway(gateway, actor=admin)
-        with pytest.raises(ValidationError):
-            gateway_services.set_console_address(gateway, actor=admin, address="https://192.168.1.211/ui/")
-    changes = [(e.data["from"], e.data["to"]) for e in audit_events(world_a, "gateway.console_address_changed")]
-    assert sorted(changes) == sorted(
-        [
-            ("https://zzamarkerzz-gateway.example.test/ui/", "https://192.168.1.211/ui/"),
-            ("https://192.168.1.211/ui/", ""),
-        ]
-    )
-
-
-def test_a_console_address_is_not_part_of_what_a_gateway_is_sent(world_a):
-    """It is a link for people. It must never change the access state a gateway pulls (rule 5)."""
-    from hub.access.services import desired_access
-
-    with organisation_context(world_a.organisation):
-        before = desired_access(world_a.site)
-        gateway_services.set_console_address(
-            world_a.gateway, actor=actor(world_a, "admin"), address="https://10.0.0.9/ui/"
-        )
-        assert desired_access(world_a.site) == before
-        assert "console" not in str(before)
-
-
 # --- the launcher on the overview page ------------------------------------------------------------
 
 
 def rostering_link(world, base="https://rostering.zzamarkerzz.example.test") -> str:
     """The Rostering tile's link: its sign-in through the hub, for this organisation by its id."""
     return f'href="{base}/api/v1/auth/hub/start?hub_org={world.organisation.pk}"'
-
-
-CONSOLE_LINK = 'href="https://zzamarkerzz-gateway.example.test/ui/"'
 
 
 def test_staff_see_the_apps_they_may_use_and_nothing_else(client, world_a):
@@ -353,38 +307,65 @@ def test_an_owner_also_sees_what_is_not_connected(client, world_a):
     body = page(client, "org_home", world_a)
     assert rostering_link(world_a) in body
     assert "Pulsar Access Control" in body and "Not connected" in body and "Manage apps" in body
-    assert CONSOLE_LINK not in body  # not connected, so no link, whatever the gateway holds
+    assert "Remote console:" not in body  # not connected, so no sites are listed under it
     for role in ("admin", "manager"):
         f.sign_in(client, world_a.user(role), mfa=True)
         body = page(client, "org_home", world_a)
         assert rostering_link(world_a) in body and "Pulsar Access Control" not in body and "Not connected" not in body
 
 
-def test_access_control_lists_each_site_with_a_console_or_says_what_to_do(client, world_a):
+def open_tunnel(world, *, enabled=True):
+    f.open_console_tunnel(world.gateway, enabled=enabled)
+
+
+def test_access_control_lists_each_site_and_where_its_remote_console_stands(client, world_a):
+    slug = world_a.organisation.slug
+    open_url = reverse("console_open", kwargs={"org_slug": slug, "gateway_id": world_a.gateway.pk})
     with organisation_context(world_a.organisation):
         services.connect_app(actor=actor(world_a, "owner"), product_key="access_control")
+    # The gateway has never opened a tunnel: its software predates the remote console.
+    f.sign_in(client, world_a.owner, mfa=True)
+    body = page(client, "org_home", world_a)
+    assert "Pulsar Access Control" in body and f"{world_a.marker} Clinic" in body
+    assert "Remote console: gateway software too old" in body and open_url not in body
+    # Connected with the console switched off on the gateway: said so, and still no button.
+    open_tunnel(world_a, enabled=False)
+    body = page(client, "org_home", world_a)
+    assert "Remote console: switched off on the gateway" in body and open_url not in body
+    # Available: an Owner or an Admin gets the button; a Manager sees the state only.
+    open_tunnel(world_a)
+    body = page(client, "org_home", world_a)
+    assert "Remote console: available" in body
+    assert f'<form method="post" action="{open_url}" target="_blank" rel="noopener">' in body
     f.sign_in(client, world_a.manager, mfa=True)
     body = page(client, "org_home", world_a)
-    assert "Pulsar Access Control" in body and CONSOLE_LINK in body and f"{world_a.marker} Clinic" in body
+    assert "Remote console: available" in body and open_url not in body
     # Staff do not get the tile, or the site names in it.
     f.sign_in(client, world_a.staff)
     assert "Pulsar Access Control" not in page(client, "org_home", world_a)
 
+
+def test_the_tile_never_links_to_a_gateways_own_address(client, world_a):
+    """The owner's decision of 2026-11-14: the tile opens the console through the hub or not at all."""
     with organisation_context(world_a.organisation):
-        gateway_services.set_console_address(world_a.gateway, actor=actor(world_a, "admin"), address="")
-    f.sign_in(client, world_a.manager, mfa=True)
+        services.connect_app(actor=actor(world_a, "owner"), product_key="access_control")
+    open_tunnel(world_a)
+    f.sign_in(client, world_a.owner, mfa=True)
     body = page(client, "org_home", world_a)
-    assert "Pulsar Access Control" in body and "No site has a door controller console address yet" in body
-    assert "Needs setting up" in body and "-gateway.example.test" not in body
-    assert reverse("site_list", kwargs={"org_slug": world_a.organisation.slug}) in body
+    rows = re.search(r'<ul class="app-tile__links">(.*?)</ul>', body, re.DOTALL).group(1)
+    addresses = re.findall(r'(?:href|action)="([^"]+)"', rows)
+    assert addresses and all(address.startswith("/org/") for address in addresses), addresses
 
 
-def test_a_revoked_gateways_console_is_not_offered(client, world_a):
+def test_a_tile_with_no_paired_gateway_says_what_to_do(client, world_a):
     with organisation_context(world_a.organisation):
         services.connect_app(actor=actor(world_a, "owner"), product_key="access_control")
         gateway_services.revoke_gateway(world_a.gateway, actor=actor(world_a, "admin"))
     f.sign_in(client, world_a.manager, mfa=True)
-    assert CONSOLE_LINK not in page(client, "org_home", world_a)
+    body = page(client, "org_home", world_a)
+    assert "Pulsar Access Control" in body and "No site has a gateway paired yet" in body
+    assert "Needs setting up" in body and "Remote console:" not in body
+    assert reverse("site_list", kwargs={"org_slug": world_a.organisation.slug}) in body
 
 
 def test_the_host_placeholder_follows_the_name_the_browser_used(client, world_a):
@@ -477,27 +458,34 @@ def test_an_owner_connects_changes_and_disconnects_through_settings(client, worl
     assert client.post(reverse("app_connect", kwargs={"org_slug": slug}), {"product": "rostering"}).status_code == 403
 
 
-def test_the_site_page_opens_the_console_and_lets_an_admin_set_it(client, world_a):
+def test_the_site_page_says_where_the_remote_console_stands(client, world_a):
     slug = world_a.organisation.slug
     site_page = {"site_id": world_a.site.pk}
-    form = reverse("gateway_console_address", kwargs={"org_slug": slug, "gateway_id": world_a.gateway.pk})
+    open_url = reverse("console_open", kwargs={"org_slug": slug, "gateway_id": world_a.gateway.pk})
+    f.sign_in(client, world_a.admin, mfa=True)
+    body = page(client, "site_detail", world_a, **site_page)
+    assert "Remote console" in body and "Gateway software too old" in body and open_url not in body
+    open_tunnel(world_a, enabled=False)
+    body = page(client, "site_detail", world_a, **site_page)
+    assert "Switched off on the gateway" in body and open_url not in body
+    open_tunnel(world_a)
+    body = page(client, "site_detail", world_a, **site_page)
+    assert "Available" in body and open_url in body and "Open remote console" in body
+    # The relay stops vouching for the tunnel: not connected, and the button goes.
+    with organisation_context(world_a.organisation):
+        Gateway.objects.filter(pk=world_a.gateway.pk).update(tunnel_connected=False)
+    body = page(client, "site_detail", world_a, **site_page)
+    assert "Gateway not connected" in body and open_url not in body
+    # A Manager sees the state and is told who can open it; never the button.
+    open_tunnel(world_a)
     f.sign_in(client, world_a.manager, mfa=True)
     body = page(client, "site_detail", world_a, **site_page)
-    assert "Open door controller console" in body and CONSOLE_LINK in body
-    assert form not in body  # a Manager opens it; an Admin sets it
-    assert client.post(form, {"console_address": "https://10.0.0.9/ui/"}).status_code == 403
-
-    f.sign_in(client, world_a.admin, mfa=True)
-    assert form in page(client, "site_detail", world_a, **site_page)
-    assert client.post(form, {"console_address": "https://10.0.0.9/ui/"}).status_code == 302
-    assert 'href="https://10.0.0.9/ui/"' in page(client, "site_detail", world_a, **site_page)
-    assert client.post(form, {"console_address": "https://{host}/ui/"}).status_code == 302  # refused, with a message
-    assert client.post(form, {"console_address": ""}).status_code == 302
-    body = page(client, "site_detail", world_a, **site_page)
-    assert "Open door controller console" not in body and "10.0.0.9" not in body
-    # A site without a gateway has neither the button nor the form.
+    assert "Available" in body and open_url not in body and "An Owner or an Admin can open it." in body
+    # Nothing on the page is a link to an address on the site's own network.
+    assert "console_address" not in body and "console-address" not in body
+    # A site without a gateway has no remote console section.
     body = page(client, "site_detail", world_a, site_id=world_a.pairing_code.site_id)
-    assert "Open door controller console" not in body and "console-address" not in body
+    assert "Remote console" not in body
 
 
 # --- the recovery codes page ----------------------------------------------------------------------
@@ -626,28 +614,3 @@ def test_connect_app_command_goes_through_the_service(world_a):
     with organisation_context(world_a.organisation):
         assert not ConnectedApp.objects.filter(product_key="rostering").exists()
     assert len(audit_events(world_a, "app.connected")) == 1 and len(audit_events(world_a, "app.disconnected")) == 1
-
-
-def test_set_console_address_command_goes_through_the_service(world_a):
-    import io
-
-    from django.core.management import CommandError, call_command
-
-    slug, admin = world_a.organisation.slug, world_a.admin.email
-    call_command(
-        "set_console_address", slug, world_a.site.name, "https://10.0.0.9/ui/", "--as", admin, stdout=io.StringIO()
-    )
-    with organisation_context(world_a.organisation):
-        assert Gateway.objects.get(pk=world_a.gateway.pk).console_address == "https://10.0.0.9/ui/"
-    call_command("set_console_address", slug, str(world_a.site.pk), "", "--as", admin, stdout=io.StringIO())
-    with organisation_context(world_a.organisation):
-        assert Gateway.objects.get(pk=world_a.gateway.pk).console_address == ""
-    depot = f"{world_a.marker} Depot"  # a site with no gateway
-    for refused in (
-        [slug, world_a.site.name, "https://10.0.0.9/ui/", "--as", world_a.manager.email],
-        [slug, world_a.site.name, "https://{host}/ui/", "--as", admin],
-        [slug, depot, "https://10.0.0.9/ui/", "--as", admin],
-        [slug, "No such site", "https://10.0.0.9/ui/", "--as", admin],
-    ):
-        with pytest.raises(CommandError):
-            call_command("set_console_address", *refused, stdout=io.StringIO())

@@ -6,6 +6,14 @@
 # are deliberately not repeated here.
 {
 	email {$ACME_EMAIL}
+
+	# Remote console host names (*.{$CONSOLE_DOMAIN}) get a certificate on first use, and only when
+	# the relay says the name belongs to a gateway whose tunnel is open now. Let's Encrypt limits
+	# new certificates per registered domain per week; with more than a few dozen gateways use a
+	# wildcard certificate (DNS challenge) instead. See docs/PLAN.md, H7.
+	on_demand_tls {
+		ask http://relay:8003/tls-ask
+	}
 }
 
 {$HUB_DOMAIN} {
@@ -16,6 +24,10 @@
 	@probes path /healthz /healthz/ /readyz /readyz/
 	respond @probes 404
 
+	# The relay's internal channel (web and relay talk over the Docker network) is never served.
+	@internal path /internal/*
+	respond @internal 404
+
 	# Request bodies are small JSON or forms; refuse anything over 1 MB.
 	request_body {
 		max_size 1MB
@@ -23,5 +35,30 @@
 
 	header -Server
 
+	# A gateway's remote-console tunnel: a WebSocket the gateway opens. The relay holds it.
+	@tunnel path /api/v1/gateways/tunnel
+	reverse_proxy @tunnel relay:8001
+
 	reverse_proxy web:8000
+}
+
+# Remote consoles: one host name per gateway, on a domain that is NOT the hub's (a different
+# registrable domain, so that nothing a gateway's console serves is same-site with the hub).
+# CONSOLE_ORIGIN_TEMPLATE must be https://{gateway}.{$CONSOLE_DOMAIN}.
+*.{$CONSOLE_DOMAIN} {
+	tls {
+		on_demand
+	}
+
+	# An upload through a console is capped by the relay (CONSOLE_MAX_UPLOAD_MB, 16 by default).
+	request_body {
+		max_size 70MB
+	}
+
+	header -Server
+	header Strict-Transport-Security "max-age=31536000"
+
+	reverse_proxy relay:8002 {
+		flush_interval -1
+	}
 }

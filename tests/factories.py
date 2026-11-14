@@ -275,3 +275,34 @@ class ConnectedAppFactory(ScopedFactory):
 
     product_key = "rostering"
     base_address = "https://rostering.example.test"
+
+
+# --- the remote console ---------------------------------------------------------------------------
+
+from hub.console.models import ConsoleSession  # noqa: E402
+
+
+class ConsoleSessionFactory(ScopedFactory):
+    class Meta:
+        model = ConsoleSession
+
+    gateway = factory.SubFactory(GatewayFactory, organisation=factory.SelfAttribute("..organisation"))
+    user = factory.SubFactory(UserFactory)
+    role = Role.OWNER
+    origin = "https://console.example.test"
+    started_at = factory.LazyFunction(timezone.now)
+    expires_at = factory.LazyFunction(lambda: timezone.now() + timezone.timedelta(minutes=15))
+    token_hash = factory.Sequence(lambda n: hash_token(f"handoff-{n}"))
+    handoff_expires_at = factory.LazyFunction(lambda: timezone.now() + timezone.timedelta(seconds=60))
+    browser_hash = factory.Sequence(lambda n: hash_token(f"browser-{n}"))
+
+
+def open_console_tunnel(gateway, *, enabled: bool = True):
+    """Put a gateway in the state the relay reports for an open tunnel, as the relay would."""
+    from hub.console import services as console
+
+    assert console.tunnel_opened(
+        gateway.pk, protocol="pulsar-console.v1", software_version="1.5.0", console_enabled=enabled
+    )
+    gateway.refresh_from_db()
+    return gateway

@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "hub.access",
     "hub.api",
     "hub.products",
+    "hub.console",
 ]
 
 MIDDLEWARE = [
@@ -152,6 +153,10 @@ CSRF_COOKIE_SECURE = not INSECURE_COOKIES
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+# No script the hub serves reads the CSRF cookie: every page carries the token itself (forms, and
+# hx-headers on <body>). Keeping it from script matters on a bench, where a remote console shares
+# the hub's host name and its pages' script would otherwise be able to read it.
+CSRF_COOKIE_HTTPONLY = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
@@ -263,6 +268,32 @@ PAIRING_CODE_MINUTES = env.int("PAIRING_CODE_MINUTES", default=15)
 # A gateway polls about once a minute. After this long without a call it is shown as out of contact.
 GATEWAY_OUT_OF_CONTACT_SECONDS = env.int("GATEWAY_OUT_OF_CONTACT_SECONDS", default=300)
 INVITATION_EXPIRY_DAYS = env.int("INVITATION_EXPIRY_DAYS", default=7)
+
+# --- Remote console (the relay; docs/CONTRACTS.md "Remote console") ------------------------------
+
+# Where a gateway's console is served: an origin that is never the hub's own. `{gateway}` gives
+# each gateway its own host name, on a domain that must be a different registrable domain from the
+# hub's (https://{gateway}.console.example.net). Blank turns the remote console off. On a
+# plain-HTTP bench only (INSECURE_COOKIES), one shared origin is accepted, and `{host}` may stand
+# for the host name the browser used to reach the hub: http://{host}:8081.
+CONSOLE_ORIGIN_TEMPLATE = env("CONSOLE_ORIGIN_TEMPLATE", default="").strip().rstrip("/")
+# Minutes a remote console session lasts before it must be extended with another step-up.
+CONSOLE_SESSION_MINUTES = env.int("CONSOLE_SESSION_MINUTES", default=15)
+if not 1 <= CONSOLE_SESSION_MINUTES <= 60:
+    raise ImproperlyConfigured("CONSOLE_SESSION_MINUTES must be between 1 and 60.")
+# The secret the relay and the web service show each other on the internal network.
+RELAY_INTERNAL_SECRET = env("RELAY_INTERNAL_SECRET", default="")
+# The relay's control listener, on the internal network. Never an address Caddy routes.
+RELAY_CONTROL_URL = env("RELAY_CONTROL_URL", default="http://relay:8003").rstrip("/")
+if CONSOLE_ORIGIN_TEMPLATE:
+    from relay.config import ConfigError, check_origin_template
+
+    try:
+        check_origin_template(CONSOLE_ORIGIN_TEMPLATE, allow_plain_http=INSECURE_COOKIES, hub_base_url=HUB_BASE_URL)
+    except ConfigError as exc:
+        raise ImproperlyConfigured(str(exc)) from exc
+    if len(RELAY_INTERNAL_SECRET) < 32:
+        raise ImproperlyConfigured("RELAY_INTERNAL_SECRET must be set (32 characters or more) with the console.")
 # How long a Pulsar operator may hold access to an organisation before it must be granted again.
 OPERATOR_ACCESS_MAX_HOURS = env.int("OPERATOR_ACCESS_MAX_HOURS", default=8)
 

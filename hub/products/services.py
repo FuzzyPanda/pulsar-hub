@@ -20,7 +20,6 @@ from hub.products.addresses import (
     clean_base_address,
     clean_launch_path,
     launch_url,
-    resolve_address,
 )
 from hub.products.models import ConnectedApp
 
@@ -29,7 +28,7 @@ from hub.products.models import ConnectedApp
 
 def _clean(product: catalogue.Product, *, base_address: str, launch_path: str) -> tuple[str, str]:
     if product.kind == catalogue.SITES:
-        # Its links are the console addresses of the sites' gateways; the connection holds none.
+        # It is opened per site, through each gateway's remote console; the connection holds no address.
         return "", ""
     return clean_base_address(base_address), clean_launch_path(launch_path)
 
@@ -131,6 +130,18 @@ class Link:
 
 
 @dataclass
+class SiteConsole:
+    """One site's gateway on the Access Control tile: where its remote console stands, in words,
+    and where the "Open" button posts for someone who may use it."""
+
+    label: str
+    state: str
+    state_label: str
+    open_url: str = ""
+    site_url: str = ""
+
+
+@dataclass
 class Tile:
     """One product on the launcher, as one role sees it."""
 
@@ -140,23 +151,40 @@ class Tile:
     # yet. `off`: connected and turned off. `not_connected`: in the catalogue only.
     state: str
     links: list[Link] = field(default_factory=list)
+    # For a product that lives at each site: one row per site with a paired gateway.
+    sites: list[SiteConsole] = field(default_factory=list)
     # What to do about a tile that cannot be opened, and where (shown to those who can do it).
     note: str = ""
     action_label: str = ""
     action_url: str = ""
 
 
-def _console_links() -> list[Link]:
-    """One link per site whose live gateway has a console address."""
+def _site_consoles(*, actor: Actor, org_slug: str) -> list[SiteConsole]:
+    """One row per site with a live gateway: the state of its remote console, and the address the
+    "Open" button posts to when the console is available and this person is an Owner or an Admin.
+
+    Never a link to a gateway's own address: the console is reached through the hub or not at all
+    (the owner's decision of 2026-11-14).
+    """
+    from hub.console import services as console
     from hub.gateways.models import Gateway
 
-    links = []
-    gateways = Gateway.objects.live().exclude(console_address="").select_related("site").order_by("site__name")
-    for gateway in gateways:
-        url = resolve_address(gateway.console_address, host="")
-        if url:
-            links.append(Link(gateway.site.name, url))
-    return links
+    may_open = actor.is_member_with(Role.ADMIN)
+    rows = []
+    for gateway in Gateway.objects.live().select_related("site").order_by("site__name"):
+        described = console.describe(gateway)
+        rows.append(
+            SiteConsole(
+                label=gateway.site.name,
+                state=described["state"],
+                state_label=described["label"],
+                open_url=reverse("console_open", kwargs={"org_slug": org_slug, "gateway_id": gateway.pk})
+                if may_open and described["state"] == console.AVAILABLE
+                else "",
+                site_url=reverse("site_detail", kwargs={"org_slug": org_slug, "site_id": gateway.site_id}),
+            )
+        )
+    return rows
 
 
 def launcher_tiles(*, actor: Actor, request) -> list[Tile]:
@@ -182,13 +210,10 @@ def launcher_tiles(*, actor: Actor, request) -> list[Tile]:
             tile.state = "not_connected" if app is None else "off"
             tile.action_label, tile.action_url = ("Connect" if app is None else "Turn on"), settings_url
         elif product.kind == catalogue.SITES:
-            tile.links = _console_links()
-            if not tile.links:
+            tile.sites = _site_consoles(actor=actor, org_slug=organisation.slug)
+            if not tile.sites:
                 tile.state = "needs_setup"
-                tile.note = (
-                    "No site has a door controller console address yet. An Admin can add one on a site's "
-                    "page, under Gateway."
-                )
+                tile.note = "No site has a gateway paired yet. An Admin can pair one on a site's page."
                 tile.action_label = "Go to sites"
                 tile.action_url = reverse("site_list", kwargs={"org_slug": organisation.slug})
         else:

@@ -12,3 +12,8 @@ whitenoise>=6.9
 python-json-logger>=3.3
 sentry-sdk>=2.30
 argon2-cffi>=23.1
+# The remote-console relay (relay/). The one asynchronous dependency: it gives the relay its
+# WebSocket server (gateway tunnels), its streaming HTTP server (console origins) and its HTTP
+# client (the internal channel) from one maintained project. Pinned exactly, unlike the ranges
+# above: this is the part of the hub that speaks raw HTTP to the internet.
+aiohttp==3.14.5

@@ -1,6 +1,7 @@
 from django.urls import include, path
 
 from hub.access.urls import org_patterns as access_patterns
+from hub.console.urls import org_patterns as console_patterns
 from hub.directory.urls import org_patterns as directory_patterns
 from hub.gateways.urls import org_patterns as gateway_patterns
 from hub.organisations import views
@@ -33,6 +34,7 @@ org_patterns = [
     *directory_patterns,
     *access_patterns,
     *gateway_patterns,
+    *console_patterns,
     *product_patterns,
 ]
 

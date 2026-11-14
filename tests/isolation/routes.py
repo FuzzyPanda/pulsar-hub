@@ -25,6 +25,10 @@ NON_ORGANISATION_PREFIXES = {
     "admin/": "Django admin: platform records only, staff with MFA (tests/test_auth.py)",
     "operator/": "Pulsar operators: organisation names and status only (test_routes.py)",
     "invitations/": "one invitation, reached by its secret token (tests/test_auth.py)",
+    "internal/relay/": (
+        "the relay's internal channel: shared secret, never routed by Caddy; each call acts only on the "
+        "gateway or session whose secret or id the relay presents (tests/test_console.py)"
+    ),
     "": "home: the signed-in user's own memberships",
 }
 
@@ -138,13 +142,10 @@ ORG_ROUTES: dict[str, OrgRoute] = {
         "POST", Role.ADMIN, kwargs=lambda w: {"site_id": w.pairing_code.site_id}, step_up=True
     ),
     "gateway_revoke": OrgRoute("POST", Role.ADMIN, kwargs=lambda w: {"gateway_id": w.gateway.pk}, step_up=True),
-    "gateway_console_address": OrgRoute(
-        "POST",
-        Role.ADMIN,
-        kwargs=lambda w: {"gateway_id": w.gateway.pk},
-        data=lambda w: {"console_address": "https://changed.example.test/ui/"},
-        step_up=True,
-    ),
+    # The remote console: opening a session on a gateway, extending it, ending it.
+    "console_open": OrgRoute("POST", Role.ADMIN, kwargs=lambda w: {"gateway_id": w.gateway.pk}, step_up=True),
+    "console_extend": OrgRoute("POST", Role.ADMIN, kwargs=lambda w: {"session_id": w.console_session.pk}, step_up=True),
+    "console_end": OrgRoute("POST", Role.ADMIN, kwargs=lambda w: {"session_id": w.console_session.pk}),
     "event_list": OrgRoute(minimum_role=Role.MANAGER),
     # Connected products (the Apps launcher).
     "app_connect": OrgRoute("POST", Role.OWNER, data=lambda w: {"product": "access_control"}, step_up=True),

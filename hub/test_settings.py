@@ -11,6 +11,11 @@ os.environ.setdefault("MICROSOFT_CLIENT_SECRET", "test-microsoft-secret")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-secret")
 os.environ["DJANGO_DEBUG"] = "False"
+# The remote console, as production runs it: one origin per gateway. No relay is running in most
+# tests (RELAY_CONTROL_URL is blank); the ones that need one start it themselves.
+os.environ.setdefault("CONSOLE_ORIGIN_TEMPLATE", "https://{gateway}.console.test")
+os.environ.setdefault("RELAY_INTERNAL_SECRET", "test-only-relay-secret-0123456789abcdef")
+os.environ.setdefault("RELAY_CONTROL_URL", "")
 
 from hub.accounts.oidc_keys import generate_rsa_private_key_pem  # noqa: E402
 

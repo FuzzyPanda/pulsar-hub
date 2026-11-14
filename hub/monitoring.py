@@ -30,6 +30,9 @@ def init_error_monitoring(*, dsn: str, environment: str, release: str = "") -> N
         environment=environment,
         release=release or None,
         send_default_pii=False,
+        # Stack frames would carry whatever a function held when it failed: a gateway credential,
+        # a hand-off token, a console cookie's secret. None of it leaves the process.
+        include_local_variables=False,
         traces_sample_rate=0.0,
         before_send=_scrub,
     )

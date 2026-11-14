@@ -14,6 +14,7 @@ ignore = [
 "hub/test_settings.py" = ["F401", "F403", "F405", "S105"]
 "tests/**" = ["S105", "S106", "S311"]
 "scripts/**" = ["T201"]
+"tools/**" = ["T201", "S105", "S106", "S311"]
 
 [lint.isort]
 known-first-party = ["hub", "tests"]
