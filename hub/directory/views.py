@@ -16,6 +16,7 @@ from hub.gateways.views import site_sync_status
 from hub.organisations.models import Organisation, Role
 from hub.organisations.services import Actor
 from hub.organisations.views import _flash_errors, role_required
+from hub.products.addresses import resolve_address
 
 ERRORS = (ValidationError, PermissionDenied, ValueError)
 
@@ -68,6 +69,8 @@ def site_detail(request, org_slug: str, site_id):
         "on_site": gateways.people_on_site(site),
         "doors": (gateway.state or {}).get("doors", []) if gateway else [],
         "health": (gateway.state or {}).get("health", {}) if gateway else {},
+        # The gateway's own console, as a link for the person's browser. Empty when none is set.
+        "console_url": resolve_address(gateway.console_address, host="") if gateway else "",
         "recent_events": GatewayEvent.objects.filter(site=site).select_related("person")[:25],
         "hub_owned": _hub_owned(request),
         "can_edit": actor.is_member_with(Role.ADMIN),

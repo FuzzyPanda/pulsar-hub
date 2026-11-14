@@ -1,0 +1,6 @@
+{% extends "mfa/webauthn/authenticator_confirm_delete.html" %}
+{% comment %}django-allauth's page, plus a way back: the stock page offers only "Remove".{% endcomment %}
+{% block content %}
+  {{ block.super }}
+  <p><a href="{% url 'mfa_list_webauthn' %}">Cancel and go back to security keys</a></p>
+{% endblock content %}

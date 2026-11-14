@@ -35,6 +35,7 @@ FACTORIES = {
     f.Gateway: f.GatewayFactory,
     f.GatewayEvent: f.GatewayEventFactory,
     f.ServiceToken: f.ServiceTokenFactory,
+    f.ConnectedApp: f.ConnectedAppFactory,
 }
 
 

@@ -1,0 +1,13 @@
+{% comment %}
+  Replaces django-allauth's snippet of the same name, which every security key and passkey page
+  includes. The stock scripts report a failure only to the browser's console, so a button that
+  cannot work (browsers offer security keys on https only) simply did nothing. The notice below is
+  filled in by hub/js/webauthn_notice.js when that happens.
+{% endcomment %}
+{% load i18n static %}
+<noscript>{% translate "This functionality requires JavaScript." %}</noscript>
+<p class="alert alert-warning" id="webauthn_notice" role="alert" hidden></p>
+<script src="{% static 'mfa/js/webauthn-json.js' %}"></script>
+<script src="{% static 'mfa/js/webauthn.js' %}"></script>
+<script src="{% static 'account/js/onload.js' %}"></script>
+<script src="{% static 'hub/js/webauthn_notice.js' %}"></script>

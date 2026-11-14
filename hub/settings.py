@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     "hub.gateways",
     "hub.access",
     "hub.api",
+    "hub.products",
 ]
 
 MIDDLEWARE = [

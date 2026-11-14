@@ -128,7 +128,24 @@ ORG_ROUTES: dict[str, OrgRoute] = {
         "POST", Role.ADMIN, kwargs=lambda w: {"site_id": w.pairing_code.site_id}, step_up=True
     ),
     "gateway_revoke": OrgRoute("POST", Role.ADMIN, kwargs=lambda w: {"gateway_id": w.gateway.pk}, step_up=True),
+    "gateway_console_address": OrgRoute(
+        "POST",
+        Role.ADMIN,
+        kwargs=lambda w: {"gateway_id": w.gateway.pk},
+        data=lambda w: {"console_address": "https://changed.example.test/ui/"},
+        step_up=True,
+    ),
     "event_list": OrgRoute(minimum_role=Role.MANAGER),
+    # Connected products (the Apps launcher).
+    "app_connect": OrgRoute("POST", Role.OWNER, data=lambda w: {"product": "access_control"}, step_up=True),
+    "app_update": OrgRoute(
+        "POST",
+        Role.OWNER,
+        kwargs=lambda w: {"app_id": w.connected_app.pk},
+        data=lambda w: {"base_address": "https://changed.example.test", "enabled": "on"},
+        step_up=True,
+    ),
+    "app_disconnect": OrgRoute("POST", Role.OWNER, kwargs=lambda w: {"app_id": w.connected_app.pk}, step_up=True),
 }
 
 

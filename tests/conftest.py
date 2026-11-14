@@ -40,6 +40,7 @@ class World:
     event: object = None
     service_token: object = None
     service_token_value: str = ""
+    connected_app: object = None
 
     def user(self, role: str):
         return getattr(self, role)
@@ -80,6 +81,7 @@ def make_world(letter: str) -> World:
         name=f"{marker} gateway",
         credential_hash=hash_token(world.gateway_credential),
         state={"doors": [{"door_ref": "front", "name": f"{marker} front door", "state": "locked", "mode": "normal"}]},
+        console_address=f"https://{marker.lower()}-gateway.example.test/ui/",
     )
     world.pairing_code = f.PairingCodeFactory(
         organisation=organisation,
@@ -96,6 +98,13 @@ def make_world(letter: str) -> World:
     world.service_token_value = f"hubsvc_{marker.lower()}_token"
     world.service_token = f.ServiceTokenFactory(
         organisation=organisation, name=f"{marker} rostering", token_hash=hash_token(world.service_token_value)
+    )
+    # The product launcher: one connected product whose address carries the marker.
+    world.connected_app = f.ConnectedAppFactory(
+        organisation=organisation,
+        product_key="rostering",
+        base_address=f"https://rostering.{marker.lower()}.example.test",
+        connected_by=world.owner,
     )
     return world
 

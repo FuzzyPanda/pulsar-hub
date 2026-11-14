@@ -116,8 +116,13 @@ def invitation_accept(request, token: str):
 
 @require_GET
 def org_home(request, org_slug: str):
+    from hub.products import services as products
+
     actor = Actor.from_request(request)
     context = {
+        # The launcher: every Pulsar product this organisation has, as this person may use it.
+        "app_tiles": products.launcher_tiles(actor=actor, request=request),
+        "is_owner": actor.is_member_with(Role.OWNER),
         "member_count": Membership.objects.filter(is_active=True).count(),
         "pending_invitations": Invitation.objects.filter(
             accepted_at__isnull=True, revoked_at__isnull=True, expires_at__gt=timezone.now()
@@ -235,8 +240,15 @@ def org_settings(request, org_slug: str):
             messages.success(request, "Saved.")
         return redirect("org_settings", org_slug=org_slug)
     from hub.api.models import Scope, ServiceToken
+    from hub.products import services as products
+    from hub.products.addresses import HOST_PLACEHOLDER, browser_host
 
+    app_rows, orphaned_apps = products.settings_rows(request=request)
     context = {
+        "app_rows": app_rows,
+        "orphaned_apps": orphaned_apps,
+        "host_placeholder": HOST_PLACEHOLDER,
+        "browser_host": browser_host(request),
         "identity_providers": IdentityProvider.objects.all(),
         "provider_choices": IdentityProvider.Provider.choices,
         "is_owner": actor.membership is not None and actor.membership.has_role(Role.OWNER),

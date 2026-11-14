@@ -70,6 +70,22 @@ invitation, and a first sign-in through a directory is accepted only while accep
 from an organisation that lists that directory, for the invited address. A directory's email claim
 is never used to match an existing login.
 
+### Opening a product from the hub
+
+The hub's Apps launcher links to each product an organisation has connected (`docs/PRODUCTS.md`).
+The link is followed by the person's browser; the hub makes no call of its own.
+
+| Product | Link | What the product does with it |
+|---|---|---|
+| Pulsar Rostering | `{base}/api/v1/auth/hub/start?org={org_slug}` | Starts its "sign in with Pulsar Hub": an authorisation-code request to this hub as OIDC provider (above), for the organisation whose hub slug is `org_slug`, and lands the person signed in. Rostering registers its own client with the hub |
+| Pulsar Access Control | The console address an Admin recorded for the site's gateway | The gateway's own web console, with the gateway's own sign-in. Reachable from the site's network only |
+
+`{base}` is the address an Owner entered for the organisation. `org_slug` is the hub's slug, sent
+so that Rostering can pick the organisation before anyone is signed in; it grants nothing, and
+Rostering must take the organisation it trusts from the `org_ref` claim of the token it then
+receives. An Owner can replace the path for one organisation (for a product version that has no
+such endpoint yet) without a change here.
+
 ## Gateway and hub (built: hub side H3, gateway side in `Pulsar-Access-Control`)
 
 The gateway always initiates. Every call is HTTPS to `{HUB_BASE_URL}/api/v1/`, JSON in and out.

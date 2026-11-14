@@ -1,0 +1,10 @@
+{% extends "mfa/webauthn/add_form.html" %}
+{% comment %}
+  django-allauth's page, plus a way back. Its "Add" button is run by a script; where the browser
+  cannot use a security key (a plain-HTTP lab hub, for one) the hub's own snippet
+  (mfa/webauthn/snippets/scripts.html) now says so instead of leaving a button that does nothing.
+{% endcomment %}
+{% block content %}
+  {{ block.super }}
+  <p><a href="{% url 'mfa_index' %}">Cancel and go back to two-step sign-in</a></p>
+{% endblock content %}

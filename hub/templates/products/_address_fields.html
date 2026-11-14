@@ -1,0 +1,11 @@
+{# The address and launch path of one product, inside a connect or change form. #}
+<div class="field">
+  <label for="{{ prefix }}-{{ product.key }}-address">Address</label>
+  <input id="{{ prefix }}-{{ product.key }}-address" type="text" name="base_address" value="{{ app.base_address|default:'' }}" maxlength="300" required autocomplete="off" inputmode="url" placeholder="https://">
+  <p class="hint">{% if product.address_hint %}{{ product.address_hint }} {% endif %}Starts with http:// or https://. Write <code>{{ host_placeholder }}</code> in place of the host name to use whichever name this hub was opened with: <code>http://{{ host_placeholder }}:8080</code> is <code>http://{{ browser_host }}:8080</code> for you now.</p>
+</div>
+<div class="field">
+  <label for="{{ prefix }}-{{ product.key }}-path">Launch path <span class="muted">(optional)</span></label>
+  <input id="{{ prefix }}-{{ product.key }}-path" type="text" name="launch_path" value="{{ app.launch_path|default:'' }}" maxlength="300" autocomplete="off" placeholder="{{ product.launch_path }}">
+  <p class="hint">Where on that address the app opens. Leave it blank for the usual one, <code>{{ product.launch_path }}</code>. Enter <code>/</code> to open the front page instead.</p>
+</div>
