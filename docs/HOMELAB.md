@@ -155,6 +155,8 @@ hub instead and checks a gateway against the contract.
 - The remote console's bench mode puts every gateway's console on one origin that shares the hub's
   host name. A gateway's cookies and the hub's are still kept apart (the relay holds the
   gateway's), but the consoles share the browser's storage with each other and are "same-site"
-  with the hub. Production gives each gateway its own origin on a separate domain; do not put the
-  bench mode on the internet.
+  with the hub: cookies ignore ports, so script on a console page can set cookies the hub is
+  then sent, and could read any hub cookie that script may read (none today: they are all
+  `HttpOnly`). Production gives each gateway its own origin on a separate domain; do not put the
+  bench mode on the internet. The hub refuses to start in bench mode if `HUB_BASE_URL` is https.
 - Passkeys and sign-in with Microsoft or Google need HTTPS and a real address.

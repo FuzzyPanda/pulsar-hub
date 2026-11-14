@@ -90,14 +90,27 @@ and the audit log on both sides. Contract: `CONTRACTS.md`, "Remote console".
   browser: opening with and without a step-up prompt, a form, an upload, a 20 MB download, a
   session reaching its 15-minute limit, End from the hub, and revocation in mid-session.
 - [ ] Gateway side, in `Pulsar-Access-Control`: the tunnel client, the local opt-in switch (off by
-  default), the gateway's own audit of remote sessions. **Not started.** Until it is, every real
-  gateway shows "gateway software too old".
+  default), the gateway's own audit of remote sessions. Until it is built, every real gateway
+  shows "gateway software too old".
+- [ ] Gateway side, door actions in a remote session (decision D9, 2026-11-15): unlock a door,
+  lock down and change door modes each ask for a typed reason that goes in the gateway's audit
+  log; emergency unlock is refused remotely.
+- [ ] A client certificate on the tunnel, in the contract and on both sides, **before the switch
+  is turned on at any paying client's site** (decision D7, 2026-11-15). Until then the pairing
+  credential is accepted for bench and pilot use only, and Access Control's documents are to
+  record that as a dated exception to its fleet rule.
 - [ ] Run against a real gateway. Nothing here has met one.
 - [ ] Production console origins: a separate registrable domain with a wildcard DNS record
   (`CONSOLE_DOMAIN`), and its certificates. `Caddyfile.prod` is written for it and has never
   served a request. With more than a few dozen gateways it needs a wildcard certificate (H7).
-- [ ] An independent security review of the relay and of `hub/console/` before either faces the
-  internet, as H1 had.
+- [x] An independent security review of the relay and of `hub/console/` (2026-11-15). It found
+  one critical fault (a gateway could put bytes after a response that has no body, and so forge
+  the answer to another console's request on a connection the proxy reuses), one medium (a flood
+  of switch changes from one gateway could delay or drop other organisations' reports and fill
+  the logs and the audit log) and eight lesser ones. All are fixed, each of the two it proved by
+  running an exploit with a test that fails without the fix (`tests/relay/test_review.py`). It
+  did not review `tools/` or the tests. A second look after these fixes, and again once the
+  gateway side exists, is still owed before this faces the internet.
 - [ ] More than one relay. There is one, and its state is in memory.
 - [ ] Pulsar Rostering's side of the link (`/api/v1/auth/hub/start`, "sign in with Pulsar Hub")
   is being built in `pulsar-rostering`. Until it is live there, an Owner can point the tile at
@@ -163,7 +176,11 @@ gateway's whole console, an Owner or Admin can already do from far away whatever
 them do at a door, once the gateway side exists and someone on site has switched it on. The limits
 below ("only two actions", "never remote emergency unlock", "a reason") do not bind that path
 unless the gateway applies them to remote sessions, which it can: it is told which requests are
-remote and for whom. That is decision D9 in `DECISIONS.md`, and it is open.
+remote and for whom. The owner settled this on 2026-11-15 (decision D9 in `DECISIONS.md`): a
+remote session may unlock a door, lock down and change door modes, each with a typed reason in
+the audit log, and may never do an emergency unlock. So "never remote emergency unlock" holds for
+both paths; "only two actions" remains a rule for the hub's own actions, which are still not
+built.
 
 - [ ] Only two actions: a timed unlock pulse on one door, and lockdown of a site.
   **Never remote emergency unlock.**

@@ -40,7 +40,9 @@ Time Is Money 2).
    one exception and carry their own rules in `docs/PLAN.md`. The remote console (rule 3) is not a
    command channel of the hub's: a person operates the gateway's own console, the gateway decides
    and records what happens, and the hub sends it no instruction of its own. What that person can
-   then do at a door from far away is the gateway's to limit; see `docs/DECISIONS.md` D9.
+   then do at a door from far away is the gateway's to limit, and the owner has said how
+   (2026-11-15, D9 in `docs/DECISIONS.md`): unlock a door, lock down and change door modes, each
+   with a typed reason in the audit log; never emergency unlock, which is done on site.
 6. **Secrets come from the environment.** Never commit `.env`, keys, dumps or backups. Update
    `.env.example` with placeholders whenever a variable is added.
 7. **Every sign-in, role change, access change, operator access and remote action is audited.**

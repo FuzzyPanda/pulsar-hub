@@ -304,15 +304,21 @@ an older peer needs a new version name.
 
 **Frames.** A text message is one JSON object with a string `"t"` (the frame type), at most
 131072 bytes. A binary message is body data for one stream: a 4-byte big-endian stream id, then 1
-to 65536 bytes of data. Malformed frames, a first frame that is not `hello`, a `hello` later than
-10 seconds, a `status` outside 200 to 599, or more data than a stream's window allows are protocol
-errors: the hub closes the tunnel with `4000`.
+to 65536 bytes of data. **Protocol errors**, on any of which the hub closes the tunnel with `4000`:
+
+- a malformed frame; a first frame that is not `hello`; a `hello` later than 10 seconds;
+- a `res` whose `status` is not a whole number from 200 to 599 (so never a `1xx`);
+- a `res` with `body: true` in answer to a `HEAD` request, or with status `204` or `304`
+  (added 2026-11-15; these responses have no body, and the hub will not carry one);
+- more data on a stream than its window allows, or data for a stream outside its response;
+- two `console` frames less than 5 seconds apart, or one whose `enabled` is not `true` or `false`
+  (added 2026-11-15).
 
 | Frame | Direction | Fields |
 |---|---|---|
 | `hello` | gateway → hub, first, within 10 s | `console_enabled` (boolean, required), `software_version` (text, optional) |
 | `welcome` | hub → gateway, in answer | `gateway_id`, `org_ref`, `site_ref`, `limits` (below), `ping_seconds` (20), `idle_seconds` (60) |
-| `console` | gateway → hub | `enabled` (boolean): the local switch changed |
+| `console` | gateway → hub | `enabled` (boolean): the local switch changed. Sent only when the state the hub was last told (in `hello` or a `console` frame) has really changed, and **never less than 5 seconds after the `console` frame before it**. Someone flicking the switch produces one frame, late, with where it ended up |
 | `session.start` | hub → gateway | `session`, `user` {`id`, `email`, `name`, `role`}, `started_at`, `expires_at`, `console_origin`, `client_ip` |
 | `session.ack` | gateway → hub, within 5 s | `session`, `ok` (boolean), and when not ok `reason`: `disabled` (the switch is off), `busy`, or anything else |
 | `session.extend` | hub → gateway | `session`, `expires_at` |
@@ -378,6 +384,9 @@ extended only by another step-up.
   hub tells the person the gateway did not answer and sends `session.end` (reason `not_started`).
 - With its switch off the gateway answers `ok: false`, `reason: "disabled"`. It may refuse for any
   reason of its own.
+- A gateway that does not answer `session.start` in time is not asked again for a minute: people
+  are told it did not answer. (Each Open keeps one of the hub's few web workers waiting, so the
+  hub also limits how many a person and a gateway may attempt a minute.)
 - **Every `req` names its session.** The gateway must refuse (with `rst`, or a `res` of its own
   making) a request for a session it did not accept, one that has ended, and one whose `expires_at`
   passed more than 60 seconds ago by its own clock. The hub ends sessions on time; the 60 seconds
@@ -418,8 +427,12 @@ extended only by another step-up.
 - With `body: true` the body follows as binary frames and ends with `req.end`. **The gateway reads
   every request body to its end**, granting credit as it goes, even when it has already answered.
 - The gateway answers with `res`, then binary frames and `res.end` when `body` is true. It never
-  sends a `1xx` status; `HEAD`, `204` and `304` have `body: false`. If it cannot answer it sends
-  `rst`, and the browser gets a `502`.
+  sends a `1xx` status. **An answer to `HEAD`, and any `204` or `304`, has `body: false`**,
+  whatever its console sent: `body: true` on one of these is a protocol error and costs the
+  tunnel. If it cannot answer it sends `rst`, and the browser gets a `502`.
+- A `content-length` the gateway passes on must be the length of the body it then sends. If the
+  two differ the hub cuts the browser's connection rather than deliver a response of the wrong
+  length; it never delivers more than was declared.
 - Either side abandons a stream with `rst`. Frames for a stream that is not open are ignored (they
   cross on the wire), except that body data for a stream the hub does hold, outside its response,
   is a protocol error.
@@ -466,9 +479,13 @@ exactly `console_origin`.
 session, and sends them back with that session's requests; the browser never receives them. So:
 `Domain`, `Secure`, `HttpOnly` and `SameSite` have no effect; `Path`, `Max-Age` and `Expires` are
 honoured; at most 50 cookies of 4096 bytes each; they are gone when the session ends. **Script in
-a console page cannot read or set the console's cookies** (`document.cookie` is empty), so a
-console must carry its CSRF token in the page, as Pulsar Access Control's does, and must not read
-it from a cookie in script. A gateway should end its console's own sign-in when the hub session it
+a console page cannot read or set the console's cookies**: they are not in the browser, so
+`document.cookie` holds none of them. A console must carry its CSRF token in the page, as Pulsar
+Access Control's does, and must not read it from a cookie in script. (`document.cookie` is empty
+on a production console origin. On a plain-HTTP bench it is not necessarily: cookies ignore
+ports, so a console page there can see any cookie of the hub's that script is allowed to read.
+The hub's own cookies are all `HttpOnly` since 2026-11-15, the CSRF cookie included, so today
+that is none; but script there can still *set* cookies that the hub will be sent.) A gateway should end its console's own sign-in when the hub session it
 was made in ends.
 
 **What the hub does to a response.** Removes hop-by-hop headers, `set-cookie` (to the jar),
@@ -476,10 +493,13 @@ was made in ends.
 `service-worker-allowed`, `nel`, `report-to`, `reporting-endpoints`, `expect-ct`,
 `origin-agent-cluster`, `date` and `server`. Sets `referrer-policy: same-origin` and
 `cross-origin-resource-policy: same-origin`, and `x-content-type-options: nosniff` and
-`cross-origin-opener-policy: same-origin` unless the console set its own. **Keeps the browser on
-the console origin:** in `location`, `content-location`, `refresh`, `hx-redirect`, `hx-location`,
+`cross-origin-opener-policy: same-origin` unless the console set its own. Sends every relayed
+response with `connection: close`, on a connection it does not use again: how a response is framed
+comes from the gateway, and nothing a gateway sends may be left over for the next request.
+**Keeps the browser on the console origin:** in `location`, `content-location`, `refresh`, `hx-redirect`, `hx-location`,
 `hx-push-url` and `hx-replace-url`, the scheme and host of an absolute address are discarded and
-the path, query and fragment kept. So a console that redirects to its own local address lands on
+the path, query and fragment kept (in `refresh`, with or without `url=` and with or without
+quotes, as browsers read it). So a console that redirects to its own local address lands on
 the right page of the console origin, and no console can send the browser anywhere else. The body
 is passed through untouched; `content-encoding` is the console's business.
 
@@ -497,9 +517,19 @@ its own: `https://{gateway}.console.example.net`, where `{gateway}` is the gatew
 dashes. **The domain must be a different registrable domain from the hub's**, so that nothing a
 console serves is same-site with the hub. The browser reaches it from the hub by a form `POST`
 carrying a single-use token that is valid for 60 seconds, is stored only as a digest, is never in
-an address and is never logged; the relay exchanges it for the session's cookie
+an address and is never logged. The `POST` must come from a page of the hub origin the session was
+opened on (its `Origin` header says so; the hub's hand-off page is served with
+`Referrer-Policy: strict-origin` so that the browser sends it); from anywhere else it is refused
+and the token is not spent. The relay exchanges it for the session's cookie
 (`__Host-pulsar_console`: `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, no lifetime of its
-own), whose value is random and means nothing without the hub's record of the session.
+own), whose value is random and means nothing without the hub's record of the session. Over HTTPS
+that name is the only one the relay reads: a plain `pulsar_console` cookie, which another host on
+the console domain could set, is ignored.
+
+The hub and the relay refuse to start with a console domain that is the hub's own host, under it
+or over it, and refuse the plain-HTTP bench mode when the hub's own address is https. That does
+not prove "a different registrable domain" (two names under one registrable domain that is not on
+the public suffix list still pass); whoever chooses the domain has to make it so.
 
 On a plain-HTTP bench only, one shared origin on an extra port is accepted
 (`http://{host}:8081`). The cookie rules still hold there, because a gateway's cookies never reach
@@ -520,7 +550,30 @@ the hub. That is one of the reasons a bench is not a deployment.
 
 The tunnel authenticates with the same bearer credential as the rest of the hub link. The gateway
 repository's fleet-control-plane rules ask for a client certificate on anything that changes a
-site; `docs/DECISIONS.md` D7 records that this has not been reconciled.
+site. **The owner's decision of 2026-11-15 (D7):** the pairing credential is enough for bench and
+pilot use, the switch stays off by default, and a client certificate on the tunnel is required
+before it is switched on at a paying client's site; Access Control's documents are to record that
+as a dated exception. The certificate is not in this contract yet. It will be an addition to the
+upgrade request (TLS client authentication at the hub's proxy), not a change to any frame.
+
+### Door actions in a remote session
+
+**The owner's decision of 2026-11-15 (D9).** "Remote sessions can unlock a door, lock down and
+change door modes, each with a typed reason that goes in the audit log. Emergency unlock (release
+every door) is refused remotely and must be done on site."
+
+This is the gateway's to enforce, and only the gateway can: the hub relays requests and does not
+know what any of them does. For every request that arrives down the tunnel (it carries its
+`session`, and nothing that arrives any other way does), the gateway's console must:
+
+- refuse emergency unlock, whatever the role of the hub user, and say that it is done on site;
+- before unlocking a door, locking down or changing a door's mode, require a reason typed by the
+  person, and write it to the gateway's audit log with the action, the hub user's id, email and
+  role, and the session;
+- leave everything else as it is for someone signed in at the gateway.
+
+The hub sends no door instruction of its own. `PLAN.md` H6 (the hub's own remote door actions) is
+a separate thing, with its own rules, and is not built.
 
 ### Inside the hub
 
@@ -531,8 +584,29 @@ compared in constant time, refused if it came through a proxy) whether a credent
 token is valid, reports tunnels opening and closing, and every ten seconds lists the tunnels and
 sessions it holds and is told which to drop. The web service tells the relay at once when a
 session starts, is extended or ends and when a gateway is revoked (`relay:8003`, never routed by
-Caddy). If the relay cannot reach the web service it stops relaying within about 35 seconds; if it
-restarts, every session is over. There is one relay; running several is not built.
+Caddy). If the relay cannot reach the web service it stops relaying within about 35 seconds, and
+abandons what was in flight; if it restarts, every session is over. There is one relay; running
+several is not built.
+
+- **Only the web service's own `401` means a credential is not accepted.** Any other answer to
+  the relay's question (a time-out, a `5xx`, a `429`, a redirect, a `404`) is "the hub cannot be
+  asked", and the gateway is told `503`, never `401`.
+- **What the relay reports is bounded.** One slot per gateway's closed tunnel, per ended session
+  and per gateway's switch; a newer report replaces the one waiting. A gateway's switch changes
+  reach the web service at most three times a minute, then only the latest state (each is an
+  audit event). No gateway can delay or push out another's reports.
+- **Each tunnel has an id** of the relay's making, sent with `tunnel/opened`, the heartbeat and
+  `tunnel.closed`. A late report that an earlier connection closed does not close the current one.
+- **Cost, at fleet scale.** Every ten seconds the web service looks up each tunnel the relay
+  lists and re-checks each open session (membership, role, hub sign-in): a handful of queries
+  per session and one per gateway. That is nothing for hundreds of gateways and a few sessions.
+  For thousands of gateways the per-gateway part wants batching into one query before it is
+  relied on.
+- **Certificates on demand can be used up.** Each pairing makes a new gateway id, so a new console
+  host name, so (with on-demand TLS) a new certificate the first time its tunnel is open and
+  someone asks for the name. An Admin pairing and re-pairing in a loop could spend the certificate
+  authority's weekly allowance for the console domain. A wildcard certificate removes the problem
+  and is the intended production set-up (`PLAN.md`, H7).
 
 ## Pulsar Rostering and hub (built: hub side H2; Rostering side in `pulsar-rostering`)
 
