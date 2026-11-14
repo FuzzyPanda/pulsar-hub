@@ -34,6 +34,7 @@ def record(
     target=None,
     target_label: str = "",
     data: dict | None = None,
+    save: bool = True,
 ) -> AuditEvent:
     """Append one event.
 
@@ -69,10 +70,30 @@ def record(
         request_id=getattr(request, "request_id", None) or request_id_var.get("") or "",
         data=data or {},
     )
+    if not save:
+        return event
     event.save(force_insert=True)
+    _log(event)
+    return event
+
+
+def _log(event: AuditEvent) -> None:
     logger.info(
         "audit %s",
-        action,
-        extra={"audit_action": action, "audit_id": str(event.pk), "actor_kind": actor_kind},
+        event.action,
+        extra={"audit_action": event.action, "audit_id": str(event.pk), "actor_kind": event.actor_kind},
     )
-    return event
+
+
+def record_many(rows: list[dict], *, request=None, actor=_UNSET, actor_kind: str | None = None) -> None:
+    """Append several events by one actor in one statement. Each row is the keyword arguments
+    `record` takes for one event (`action`, `target`, `target_label`, `data`).
+
+    For a change that touches many people at once (a list of people in, a list of access changes
+    out): every one of them is still its own event, and writing them costs one insert, not one
+    each, inside a transaction that is holding locks.
+    """
+    events = [record(request=request, actor=actor, actor_kind=actor_kind, save=False, **row) for row in rows]
+    AuditEvent.objects.bulk_create(events, batch_size=500)
+    for event in events:
+        _log(event)

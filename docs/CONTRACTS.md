@@ -317,20 +317,39 @@ by the next.
 - Only these fields exist. Rostering must never send, and the hub has nowhere to keep, pay rates,
   bank details, dates of birth, licence numbers, phone numbers or home addresses (rule 11).
 - `work_email` may be `null` or left out. `is_active` on a site and `allow_empty` are optional.
-- `positions` is optional: the names of the person's current job positions, at most 20, each cut
-  to 60 characters and made plain like a name; blanks and repeats (whatever their case) are dropped.
-  **A row that carries the key replaces the person's positions; a row without it leaves them as
-  they were.** So a sender that stops sending positions does not take anyone's access away; an
-  empty list does. Anything that is not a list of names rejects that row (`invalid_row`).
+- `positions` is optional: the names of the person's current job positions. Each is made plain
+  like a name and cut to 60 characters; blanks and repeats (whatever their case) are dropped; at
+  most 20 may remain.
+  - **A row that carries the key replaces the person's positions; a row without it leaves them as
+    they were.** So a sender that stops sending positions takes nobody's access away; an empty
+    list does.
+  - **A person whose `status` is `ended`, or who is left out of the list, holds no position**,
+    whatever the row says. If they come back, a position has to be sent again before it gives
+    them anything.
+  - A value that is not a list of names (`null` included), or more than 20 different names,
+    rejects that row (`invalid_row`). Like any rejected row it leaves the person as they were,
+    **positions and the access they give included**, until the sender fixes the row: read
+    `rejected`.
 
 **What positions do.** An Admin can name job positions on an access group in the hub console
-("Guard" on "Guards"). Whoever holds a named position is in that group for as long as they hold it,
-and so may enter every site the group opens; the match ignores case. Such a membership is kept apart
-from one made by hand: it goes when the position goes or the group stops naming it, and a hand-made
-membership in the same group is never touched. Memberships are worked out in the same transaction
-as the snapshot, so a gateway's next pull has them; nothing changes on the gateway side, which
-receives access groups as before. Rostering never decides who may enter: it says what a person's
-positions are, and the hub's own mapping decides what a position opens.
+("Guard" on "Guards"). Whoever is active and holds a named position is in that group for as long as
+they hold it, and so may enter every site the group opens; the match ignores case. Rostering never
+decides who may enter: it says what a person's positions are, and the hub's own mapping decides
+what a position opens. Nothing changes on the gateway side, which receives access groups as before.
+
+- A person is in a group once, either by hand or through a position. A hand-made membership is
+  never touched by positions. Adding by hand someone who is there through a position makes the
+  membership hand-made, so it outlasts the position.
+- **One person can always be taken out in the hub.** Removing someone who is in a group through a
+  position keeps them out of that group, whatever their positions, until a Manager allows them
+  again or adds them by hand. Their position in Rostering is not changed and need not be.
+- Memberships are worked out in the same transaction as every snapshot (changed or not) and every
+  change of a group's positions, one at a time for an organisation, so a gateway's next pull has
+  them. Each membership a position gives or takes away is its own audit event, naming the person
+  and the group.
+- If an organisation's people stop coming from Rostering (its directory source is set back to the
+  hub), positions stop deciding anything: every membership a position gave becomes a hand-made
+  one, so no door changes, and positions are cleared.
 
 `200`:
 

@@ -43,16 +43,13 @@
         {% for membership in memberships %}{% with group=membership.access_group %}
           <li>
             <a href="{% url 'group_detail' org_slug=organisation.slug group_id=group.id %}">{{ group.name }}</a>
-            {% if membership.source == "positions" %}
-              <span class="badge">Through a position</span>
-            {% else %}
+            {% if membership.source == "positions" %}<span class="badge">Through a position</span>{% endif %}
             <form method="post" action="{% url 'group_member_remove' org_slug=organisation.slug group_id=group.id %}">
               {% csrf_token %}
               <input type="hidden" name="person" value="{{ person.id }}">
               <input type="hidden" name="return" value="person">
-              <button class="btn btn-secondary btn-sm" type="submit">Remove from {{ group.name }}</button>
+              <button class="btn btn-secondary btn-sm" type="submit">{% if membership.source == "positions" %}Remove and keep out of{% else %}Remove from{% endif %} {{ group.name }}</button>
             </form>
-            {% endif %}
           </li>
         {% endwith %}{% endfor %}
       </ul>

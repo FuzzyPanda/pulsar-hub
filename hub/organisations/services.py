@@ -674,12 +674,19 @@ def set_directory_source(*, actor: Actor, source: str, request=None) -> None:
     old = organisation.directory_source
     organisation.directory_source = source
     organisation.save(update_fields=["directory_source", "updated_at"])
+    data = {"from": old, "to": str(source)}
+    if source == Organisation.DirectorySource.HUB:
+        # Positions only ever arrive from Rostering. Once it stops sending, nothing could change
+        # them, so they stop deciding anything; every door is left as it is.
+        from hub.access.services import detach_positions
+
+        data |= {key: value for key, value in detach_positions().items() if value}
     _audit(
         actor,
         "organisation.directory_source_changed",
         request=request,
         target=organisation,
-        data={"from": old, "to": str(source)},
+        data=data,
     )
 
 

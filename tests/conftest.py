@@ -76,6 +76,12 @@ def make_world(letter: str) -> World:
     f.AccessGroupSiteFactory(organisation=organisation, access_group=world.access_group, site=world.site)
     # A position the group names. Nobody holds it, so the world's one membership stays hand-made.
     f.AccessGroupPositionFactory(organisation=organisation, access_group=world.access_group, position=f"{marker} Ward")
+    # ...and a group the person is kept out of (it opens no site, so no gateway hears of it).
+    f.AccessGroupExclusionFactory(
+        organisation=organisation,
+        access_group=f.AccessGroupFactory(organisation=organisation, name=f"{marker} Night staff"),
+        person=world.person,
+    )
     world.gateway_credential = f"hubgw_{marker.lower()}_credential"
     world.gateway = f.GatewayFactory(
         organisation=organisation,

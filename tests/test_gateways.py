@@ -961,7 +961,10 @@ def test_changing_a_groups_positions_recomputes_at_once_and_is_audited(client, w
         changed = access.set_group_positions(guards, ["Supervisor", "Cleaner"], actor=actor(world_a, "admin"))
         assert changed == {"added": 1, "removed": 0} and members(guards) == {world_a.person.pk: "positions"}
         event = AuditEvent.all_organisations.get(action="access.group_positions_changed")
-        assert event.data == {"added": ["Cleaner", "Supervisor"], "removed": [], "people_added": 1, "people_removed": 0}
+        assert event.data == {"added": ["Cleaner", "Supervisor"], "removed": []}
+        granted = AuditEvent.all_organisations.filter(action="access.granted").latest("occurred_at")
+        assert granted.data == {"group": "Guards", "through": "position"}
+        assert (granted.target_ref, granted.actor_id) == (str(world_a.person.pk), world_a.admin.pk)
         # Saving the same list again is not a change.
         access.set_group_positions(guards, ["cleaner", "SUPERVISOR"], actor=actor(world_a, "admin"))
         assert AuditEvent.all_organisations.filter(action="access.group_positions_changed").count() == 1
@@ -978,16 +981,12 @@ def test_hand_made_and_position_memberships_never_overwrite_each_other(client, w
     with organisation_context(world_a.organisation):
         guards = f.AccessGroupFactory(organisation=world_a.organisation, name="Guards")
         access.set_group_positions(guards, ["Guard"], actor=actor(world_a, "admin"))
-        # Through a position: not removable by hand (it would only come back).
-        with pytest.raises(ValidationError, match="through a job position"):
-            access.remove_person_from_group(guards, person, actor=actor(world_a, "manager"))
-        assert members(guards) == {person.pk: "positions"}
         # Added by hand as well: it becomes a hand-made membership and outlasts the position.
         access.add_person_to_group(guards, person, actor=actor(world_a, "manager"))
         assert members(guards) == {person.pk: "manual"}
         assert AuditEvent.all_organisations.filter(action="access.granted").latest("occurred_at").data == {
             "group": "Guards",
-            "was": "from a position",
+            "was": "through a position",
         }
     put_directory(client, world_a, with_positions(world_a, []))
     assert members(guards) == {person.pk: "manual"}
@@ -1011,16 +1010,19 @@ def test_an_ended_person_is_told_to_the_gateway_as_before_whatever_their_positio
     body["people"].append({"person_ref": starter, "name": "New Starter", "positions": ["Guard"]})
     put_directory(client, world_a, json.dumps(body).encode())
     assert "New Starter" in [p["name"] for p in get_access(client, world_a).json()["people"]]
-    # Ended with the position still on the row: inactive at the gateway.
+    # Ended with the position still on the row: someone who has left holds no position, so the
+    # membership it gave is gone and they are no longer on the gateway's list (which a gateway
+    # treats as removal, the same as `active: false`).
     body["people"][-1] |= {"status": "ended"}
     put_directory(client, world_a, json.dumps(body).encode())
-    sent = {p["name"]: p["active"] for p in get_access(client, world_a).json()["people"]}
-    assert sent["New Starter"] is False
-    # Ended and without the position (what Rostering sends): gone from the list, which a gateway
-    # also treats as removal.
-    body["people"][-1] |= {"positions": []}
-    put_directory(client, world_a, json.dumps(body).encode())
+    assert Person.all_organisations.get(pk=starter).positions == []
     assert "New Starter" not in [p["name"] for p in get_access(client, world_a).json()["people"]]
+    # Someone in a group by hand is still told to the gateway as inactive, as before.
+    body["people"][0] |= {"status": "ended"}
+    body["people"].append({"person_ref": str(uuid.uuid4()), "name": "Still Here"})
+    put_directory(client, world_a, json.dumps(body).encode())
+    sent = {p["name"]: p["active"] for p in get_access(client, world_a).json()["people"]}
+    assert sent == {world_a.person.name: False}
 
 
 def test_the_console_sets_a_groups_positions_with_step_up(client, world_a):

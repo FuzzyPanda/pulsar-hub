@@ -130,6 +130,9 @@ ORG_ROUTES: dict[str, OrgRoute] = {
     "group_member_remove": OrgRoute(
         "POST", Role.MANAGER, kwargs=lambda w: {"group_id": w.access_group.pk}, data=lambda w: {"person": w.person.pk}
     ),
+    "group_member_allow": OrgRoute(
+        "POST", Role.MANAGER, kwargs=lambda w: {"group_id": w.access_group.pk}, data=lambda w: {"person": w.person.pk}
+    ),
     # Gateways and what they report (H3, H4).
     "gateway_pairing_code": OrgRoute(
         "POST", Role.ADMIN, kwargs=lambda w: {"site_id": w.pairing_code.site_id}, step_up=True

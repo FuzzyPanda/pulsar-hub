@@ -122,8 +122,8 @@ def end_person(person: Person, *, actor: Actor, request=None) -> None:
     _require_hub_owned()
     if person.status == Person.Status.ENDED:
         return
-    person.status, person.ended_at = Person.Status.ENDED, timezone.now()
-    person.save(update_fields=["status", "ended_at", "updated_at"])
+    person.status, person.ended_at, person.positions = Person.Status.ENDED, timezone.now(), []
+    person.save(update_fields=["status", "ended_at", "positions", "updated_at"])
     _audit(actor, "access.person_ended", request=request, target=person, target_label=person.name)
 
 
@@ -193,7 +193,7 @@ def _positions(value) -> list[str]:
     """A person's job positions as sent: plain names of at most 60 characters, sorted, with blanks
     and repeats (whatever their case) dropped."""
     problem = ValidationError(f"A person's positions must be a list of at most {MAX_POSITIONS_PER_PERSON} names.")
-    if not isinstance(value, list) or len(value) > MAX_POSITIONS_PER_PERSON:
+    if not isinstance(value, list) or len(value) > 50 * MAX_POSITIONS_PER_PERSON:
         raise problem
     names: dict[str, str] = {}
     for item in value:
@@ -202,6 +202,9 @@ def _positions(value) -> list[str]:
         name = plain_text(item, 60)
         if name:
             names.setdefault(name.casefold(), name)
+    # Counted after blanks and repeats are dropped: the limit is on positions, not on spellings.
+    if len(names) > MAX_POSITIONS_PER_PERSON:
+        raise problem
     return sorted(names.values())
 
 
@@ -219,6 +222,10 @@ def _person_values(row: dict) -> dict:
     # silence is not "this person has no position", which would take their access away.
     if "positions" in row:
         values["positions"] = _positions(row["positions"])
+    if status == Person.Status.ENDED:
+        # Someone who has left holds no position, whatever the row says or leaves unsaid. If
+        # they come back, a position has to be sent again before it gives them anything.
+        values["positions"] = []
     return values
 
 
@@ -300,12 +307,17 @@ def apply_rostering_snapshot(*, people: list[dict], sites: list[dict], allow_emp
     A list that would leave nobody active would remove every person's access at every door. That
     is refused whole unless the sender says it means it.
     """
+    from hub.access.services import lock_access, sync_position_memberships
+
     organisation = require_organisation()
     if organisation.directory_source != Organisation.DirectorySource.ROSTERING:
         raise PermissionDenied("This organisation's people and sites are managed in the hub, not sent to it.")
     if len(people) > MAX_SNAPSHOT_ROWS or len(sites) > MAX_SNAPSHOT_ROWS:
         raise ValidationError("The snapshot is too large.", code="snapshot_too_large")
 
+    # Before any row is locked: a snapshot can change who is in an access group (positions), and
+    # everything that does so runs one at a time for an organisation (see `lock_access`).
+    lock_access()
     existing_people = {p.pk: p for p in Person.objects.select_for_update()}
     existing_sites = {s.pk: s for s in Site.objects.select_for_update()}
 
@@ -404,17 +416,16 @@ def apply_rostering_snapshot(*, people: list[dict], sites: list[dict], allow_emp
             counts["people_updated"] += 1
     for ref, person in existing_people.items():
         if person.is_active and (ref in person_rows.removals or ref not in person_rows.named):
-            person.status, person.ended_at = Person.Status.ENDED, now
-            person.save(update_fields=["status", "ended_at", "updated_at"])
+            person.status, person.ended_at, person.positions = Person.Status.ENDED, now, []
+            person.save(update_fields=["status", "ended_at", "positions", "updated_at"])
             counts["people_ended"] += 1
 
+    # A group that names a position takes in whoever holds it. Worked out here, in the same
+    # transaction, so that who may enter never lags the people it is worked out from; and on every
+    # snapshot, changed or not, so that anything out of step is put right by the next one. Each
+    # membership it adds or removes is audited on its own, as an access change of that person.
+    access = sync_position_memberships()
     if any(counts.values()):
-        # A person's positions may have changed, and a group that names a position takes in
-        # whoever holds it. Worked out here, in the same transaction, so that who may enter never
-        # lags the people it is worked out from.
-        from hub.access.services import sync_position_memberships
-
-        access = sync_position_memberships()
         data = dict(counts)
         if rejected:
             data["rows_rejected"] = len(rejected)

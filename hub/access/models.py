@@ -10,6 +10,7 @@ The hub sends each gateway the state it should be in, never a list of changes (r
 
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 from hub.organisations.scoping import OrganisationScopedModel
@@ -68,7 +69,8 @@ class AccessGroupPosition(OrganisationScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     access_group = models.ForeignKey(AccessGroup, on_delete=models.CASCADE, related_name="position_links")
     position = models.CharField(max_length=60)
-    position_key = models.CharField(max_length=120, editable=False)
+    # Case-folding can make a name up to three times longer.
+    position_key = models.CharField(max_length=180, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -79,6 +81,30 @@ class AccessGroupPosition(OrganisationScopedModel):
 
     def __str__(self) -> str:
         return f"{self.position} gives {self.access_group_id}"
+
+
+class AccessGroupExclusion(OrganisationScopedModel):
+    """One person kept out of one group by a person's decision, whatever their positions say.
+
+    A membership that comes from a position cannot simply be deleted: the position would put it
+    back. Removing such a person by hand records this instead, and the positions leave them alone
+    until someone allows them again or adds them by hand. It is how one person's access is taken
+    away here, at once, when their positions are managed in another product.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    access_group = models.ForeignKey(AccessGroup, on_delete=models.CASCADE, related_name="exclusions")
+    person = models.ForeignKey("directory.Person", on_delete=models.CASCADE, related_name="access_exclusions")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["access_group", "person"], name="access_groupexclusion_unique"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person_id} kept out of {self.access_group_id}"
 
 
 class AccessGroupSite(OrganisationScopedModel):
