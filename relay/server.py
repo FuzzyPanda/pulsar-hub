@@ -199,14 +199,15 @@ class Relay:
         logger.info("session %s ended: %s", session.id, reason)
 
     async def close_gateway(self, gateway_id: str, reason: str) -> None:
-        tunnel = self.tunnels.get(gateway_id)
-        if tunnel is not None:
-            code = protocol.CLOSE_REVOKED if reason == "revoked" else protocol.CLOSE_GOING_AWAY
-            await tunnel.close(code, "this gateway's credential is no longer accepted")
+        # Sessions first, while the tunnel can still carry the reason to the gateway's own audit log.
         for session in [s for s in self.sessions.values() if s.gateway_id == gateway_id]:
             await self.end_session(
                 session, "gateway_revoked" if reason == "revoked" else "tunnel_dropped", tell_hub=False
             )
+        tunnel = self.tunnels.get(gateway_id)
+        if tunnel is not None:
+            code = protocol.CLOSE_REVOKED if reason == "revoked" else protocol.CLOSE_GOING_AWAY
+            await tunnel.close(code, "this gateway's credential is no longer accepted")
 
     # --- the tunnel listener ------------------------------------------------------------------------
 
@@ -466,7 +467,10 @@ class Relay:
     def _ended_page(self, request: web.Request, *, status: int = 200) -> web.Response:
         return_url = ""
         for value in self._presented_cookies(request):
-            return_url = self.tombstones.get(_digest(value), (0, ""))[1] or return_url
+            digest = _digest(value)
+            held = self.by_cookie.get(digest)  # past its time, and not yet swept up by the heartbeat
+            known = held.return_url if held is not None else self.tombstones.get(digest, (0, ""))[1]
+            return_url = known or return_url
         return pages.ended(return_url, status=status)
 
     def _no_session(self, request: web.Request) -> web.Response:

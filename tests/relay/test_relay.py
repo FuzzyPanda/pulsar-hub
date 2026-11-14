@@ -177,6 +177,9 @@ async def test_revoking_a_gateway_closes_its_tunnel_and_its_sessions_at_once():
         assert gateway.close_code == protocol.CLOSE_REVOKED
         assert not bench.relay.tunnels and not bench.relay.sessions
         assert (await browser.get("/ui/")).status == 401
+        # The gateway heard why, before the tunnel went: its own audit log has the reason.
+        ended = [e for e in gateway.audit if e["event"] == "session.ended"]
+        assert [e["reason"] for e in ended] == ["gateway_revoked"]
         # And it cannot come back: the hub no longer accepts the credential.
         bench.hub.credentials.clear()
         with pytest.raises(aiohttp.WSServerHandshakeError) as caught:
@@ -391,8 +394,10 @@ async def test_a_session_ends_at_its_time_limit_and_can_be_extended_before_it():
 
         short = await bench.browser(gateway, minutes=0.02, email="admin@a.test")
         await asyncio.sleep(1.4)
-        # Past its time the cookie opens nothing, whether or not anything has swept it up yet.
-        assert (await short.get("/ui/")).status == 401
+        # Past its time the cookie opens nothing, whether or not anything has swept it up yet,
+        # and the page that says so still knows the way back to the hub.
+        late = await short.get("/ui/")
+        assert late.status == 401 and "https://hub.test/back" in await late.text()
         await bench.relay.beat()
         assert short.session_id not in bench.relay.sessions
         await settle(
