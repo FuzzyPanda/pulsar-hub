@@ -1,0 +1,6 @@
+{% extends "mfa/totp/deactivate_form.html" %}
+{% comment %}django-allauth's page, plus a way back: the stock page offers only "Deactivate".{% endcomment %}
+{% block content %}
+  {{ block.super }}
+  <p><a href="{% url 'mfa_index' %}">Cancel and go back to two-step sign-in</a></p>
+{% endblock content %}

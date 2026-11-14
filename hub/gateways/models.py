@@ -70,6 +70,10 @@ class Gateway(OrganisationScopedModel):
     paired_by_code = models.ForeignKey(PairingCode, null=True, on_delete=models.SET_NULL, related_name="+")
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    # Where a person on the site's network opens this gateway's own web console, set by an Admin.
+    # It is only ever written into a page as a link for that person's browser: the hub never
+    # connects to it (rule 3), and the gateway keeps its own sign-in.
+    console_address = models.CharField(max_length=300, blank=True)
 
     # What the gateway last told us.
     last_seen_at = models.DateTimeField(null=True, blank=True)

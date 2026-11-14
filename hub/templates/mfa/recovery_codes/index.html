@@ -1,0 +1,77 @@
+{% extends "mfa/recovery_codes/base.html" %}
+{% comment %}
+  Replaces django-allauth's page of the same name. The stock page (65.22) shows the codes and an
+  "I have saved my recovery codes" tick box, and nothing else: no button, so a person who has
+  just set up two-step sign-in is left with nowhere to go. This one adds the way on.
+
+  Recovery codes are shown once (MFA_RECOVERY_CODES_SHOW_ONCE). allauth marks them as seen while
+  it draws this page, so its own download address refuses from then on. "Download" here is
+  therefore a link that carries the codes itself (a data: address), and needs no second request.
+
+  Without JavaScript the page still works: the tick box is `required`, so the browser will not
+  follow "Continue" until it is ticked. With JavaScript (hub/js/recovery_codes.js, served by the
+  hub itself, as the Content-Security-Policy requires) "Continue" is disabled until then, "Copy"
+  appears, and leaving the page before ticking the box asks first.
+{% endcomment %}
+{% load i18n allauth static %}
+{% block content %}
+  {% element h1 %}
+    {% translate "Recovery Codes" %}
+  {% endelement %}
+  {% element p %}
+    {% blocktranslate count unused_count=unused_codes|length %}There is {{ unused_count }} out of {{ total_count }} recovery codes available.{% plural %}There are {{ unused_count }} out of {{ total_count }} recovery codes available.{% endblocktranslate %}
+  {% endelement %}
+  {% if can_view_codes %}
+    <p>Each code signs you in once if you lose your phone or security key. Save them somewhere safe now: {% if MFA_RECOVERY_CODES_SHOW_ONCE %}they will not be shown again.{% else %}anyone who has them can use them.{% endif %}</p>
+    {% element field id="recovery_codes" type="textarea" rows=unused_codes|length readonly=True %}
+      {% slot label %}
+        {% translate "Unused codes" %}
+      {% endslot %}
+      {# djlint:off #}
+{% slot value %}{% for code in unused_codes %}{% if forloop.counter0 %}
+{% endif %}{{ code }}{% endfor %}{% endslot %}
+      {# djlint:on #}
+    {% endelement %}
+    <div class="actions">
+      <a class="btn btn-secondary" id="codes_download" download="recovery-codes.txt" href="data:text/plain;charset=utf-8,{% for code in unused_codes %}{{ code|urlencode:'' }}%0A{% endfor %}">{% translate "Download codes" %}</a>
+      <button class="btn btn-secondary" id="codes_copy" type="button" hidden>Copy codes</button>
+      <span class="muted small" id="codes_copy_status" role="status"></span>
+    </div>
+  {% else %}
+    <p>Your recovery codes were shown once and cannot be shown again. If you did not save them, generate a new set; the old codes then stop working.</p>
+  {% endif %}
+  {% if can_download_codes %}
+    {% url 'mfa_download_recovery_codes' as download_url %}
+    {% element button href=download_url tags="secondary" %}
+      {% translate "Download codes" %}
+    {% endelement %}
+  {% endif %}
+  {% if MFA_RECOVERY_CODES_SHOW_ONCE and can_view_codes %}
+    <hr>
+    <form method="get" action="{% url 'home' %}" id="codes_form">
+      <div class="check">
+        <input id="codes_saved" type="checkbox" required>
+        <label for="codes_saved">{% translate "I have saved my recovery codes" %}</label>
+      </div>
+      <div class="actions">
+        <button class="btn" id="codes_continue" type="submit">Continue</button>
+      </div>
+      <p class="hint" id="codes_continue_hint">Tick the box once you have saved the codes, then continue.</p>
+    </form>
+  {% else %}
+    <div class="actions">
+      <a class="btn" href="{% url 'home' %}">Continue</a>
+      {% if can_generate_codes %}
+        {% url 'mfa_generate_recovery_codes' as generate_url %}
+        {% element button href=generate_url tags="secondary" %}
+          {% translate "Generate new codes" %}
+        {% endelement %}
+      {% endif %}
+      <a class="btn btn-link" href="{% url 'mfa_index' %}">Back to two-step sign-in</a>
+    </div>
+  {% endif %}
+{% endblock content %}
+{% block extra_body %}
+  {{ block.super }}
+  {% if can_view_codes %}<script src="{% static 'hub/js/recovery_codes.js' %}"></script>{% endif %}
+{% endblock extra_body %}

@@ -70,7 +70,8 @@ land, and update `docs/CONTRACTS.md` in the same change whenever an implementati
 | `hub/api/` | `/api/v1/`: three kinds of bearer credential (a user token, a service token, a gateway credential), each bound to one organisation; `views_machine.py` holds the gateway and service calls |
 | `hub/directory/` | People and sites, and the snapshot Pulsar Rostering sends (`apply_rostering_snapshot`) |
 | `hub/access/` | Access groups and `desired_access(site)`: the complete state a site's gateway should hold |
-| `hub/gateways/` | Pairing, the gateway credential, acknowledgements, event and door-state intake |
+| `hub/gateways/` | Pairing, the gateway credential, acknowledgements, event and door-state intake, and each gateway's console address (a link only; rule 3 stands) |
+| `hub/products/` | The Apps launcher: the product catalogue (`catalogue.py`, code), each organisation's connected apps, and the addresses they open. `docs/PRODUCTS.md` says how to add a product |
 | `tests/isolation/` | The suite that gates CI (rule 1). `routes.py` lists every route |
 | `scripts/check_unscoped_access.py` | The lint for cross-organisation access |
 

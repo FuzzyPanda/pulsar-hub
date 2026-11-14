@@ -5,6 +5,7 @@ from hub.directory.urls import org_patterns as directory_patterns
 from hub.gateways.urls import org_patterns as gateway_patterns
 from hub.organisations import views
 from hub.organisations.routing import org_path
+from hub.products.urls import org_patterns as product_patterns
 
 org_patterns = [
     org_path("", views.org_home, name="org_home"),
@@ -32,6 +33,7 @@ org_patterns = [
     *directory_patterns,
     *access_patterns,
     *gateway_patterns,
+    *product_patterns,
 ]
 
 operator_patterns = [

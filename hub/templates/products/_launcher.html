@@ -1,0 +1,44 @@
+{# The Apps launcher on the organisation overview. `app_tiles` comes from hub.products.services.launcher_tiles. #}
+<section class="apps" aria-labelledby="apps-heading">
+  <div class="apps__head">
+    <h2 id="apps-heading">Apps</h2>
+    {% if is_owner %}<a href="{% url 'org_settings' org_slug=organisation.slug %}#apps">Manage apps</a>{% endif %}
+  </div>
+  {% if app_tiles %}
+    <ul class="apps__grid">
+      {% for tile in app_tiles %}
+        <li class="card app-tile{% if tile.state == 'not_connected' or tile.state == 'off' %} app-tile--idle{% endif %}">
+          <div class="app-tile__head">
+            {% include "products/_icon.html" with icon_paths=tile.icon_paths %}
+            <div>
+              <h3>{{ tile.product.name }}</h3>
+              {% if tile.state == "not_connected" %}<span class="badge">Not connected</span>
+              {% elif tile.state == "off" %}<span class="badge">Turned off</span>
+              {% elif tile.state == "needs_setup" %}<span class="badge badge-warn">Needs setting up</span>{% endif %}
+            </div>
+          </div>
+          <p class="muted">{{ tile.product.summary }}</p>
+          {% if tile.note %}<p class="small">{{ tile.note }}</p>{% endif %}
+          <div class="app-tile__actions">
+            {% if tile.links and tile.product.kind == "sites" %}
+              <ul class="app-tile__links">
+                {% for link in tile.links %}
+                  <li>
+                    <span>{{ link.label }}</span>
+                    <a class="btn btn-sm" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">Open<span class="visually-hidden"> the door controller console at {{ link.label }} (opens in a new tab)</span></a>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% elif tile.links %}
+              <a class="btn" href="{{ tile.links.0.url }}" target="_blank" rel="noopener noreferrer">Open<span class="visually-hidden"> {{ tile.product.name }} (opens in a new tab)</span></a>
+            {% elif tile.action_url %}
+              <a class="btn btn-secondary" href="{{ tile.action_url }}">{{ tile.action_label }}<span class="visually-hidden"> {{ tile.product.name }}</span></a>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">No apps are connected to this organisation yet. An Owner can connect them in Settings.</p>
+  {% endif %}
+</section>

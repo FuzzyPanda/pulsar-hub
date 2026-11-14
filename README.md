@@ -36,6 +36,7 @@ commands for development are in [`CLAUDE.md`](CLAUDE.md).
 - [`docs/PLAN.md`](docs/PLAN.md) — phases and checklists
 - [`docs/CONTRACTS.md`](docs/CONTRACTS.md) — ids, gateway pairing, calls and events
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — open decisions that block work
+- [`docs/PRODUCTS.md`](docs/PRODUCTS.md) — the Apps launcher, and how to add a product to it
 - [`docs/CANDIDATES.md`](docs/CANDIDATES.md) — ideas not yet in the plan
 - [`CLAUDE.md`](CLAUDE.md) — rules and where a coding session should start
 

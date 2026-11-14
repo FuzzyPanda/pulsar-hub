@@ -66,7 +66,27 @@
           </li>
         {% endif %}
       </ul>
+      {# The gateway's own web console: a link for the browser. The hub never connects to it. #}
+      {% if console_url %}
+        <div class="actions">
+          <a class="btn" href="{{ console_url }}" target="_blank" rel="noopener noreferrer">Open door controller console<span class="visually-hidden"> (opens in a new tab)</span></a>
+        </div>
+        <p class="hint">Opens <span class="mono">{{ console_url }}</span> in a new tab. It can be reached from the site's own network, and the gateway asks for its own sign-in.</p>
+      {% elif not can_edit %}
+        <p class="hint">No door controller console address is set for this gateway. An Admin can add one here.</p>
+      {% endif %}
       {% if can_edit %}
+        <h3 id="console-heading">Door controller console</h3>
+        <form method="post" action="{% url 'gateway_console_address' org_slug=organisation.slug gateway_id=gateway.id %}">
+          {% csrf_token %}
+          <div class="field">
+            <label for="console-address">Console address</label>
+            <input id="console-address" type="url" name="console_address" value="{{ gateway.console_address }}" maxlength="300" placeholder="https://192.168.1.50/ui/" autocomplete="off" inputmode="url">
+            <p class="hint">The address of this gateway's own web console on the site's network. People open it from this page and from the Apps launcher. Leave it blank to remove the link.</p>
+          </div>
+          <div class="actions"><button class="btn btn-secondary" type="submit">Save console address</button></div>
+        </form>
+        <hr>
         <form method="post" action="{% url 'gateway_revoke' org_slug=organisation.slug gateway_id=gateway.id %}">
           {% csrf_token %}
           <input type="hidden" name="gateway_id" value="{{ gateway.id }}">
