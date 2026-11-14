@@ -46,10 +46,13 @@ once and holds one token per organisation.
 | `sub` | `openid` | The login's id |
 | `org_ref` | `openid` | The organisation this token is for |
 | `org_role` | `openid` | `owner`, `admin`, `manager` or `staff` in that organisation, at issue time |
+| `amr` | `openid` | `["mfa"]` when the browser session that asked for the token had passed a second factor (authenticator app, passkey or recovery code; enrolling the first factor counts). Absent otherwise |
 | `name`, `org_name` | `profile` | Display names |
 | `email`, `email_verified` | `email` | The login's email address |
 
-Nothing else is ever a claim. A resource server must not treat `org_role` as live: the hub
+Nothing else is ever a claim. `amr` is in the ID token only (issued with the code and again at each
+refresh, which carries what the original sign-in proved); userinfo never has it. A client must read
+its absence as "not proved", never as "no second factor". A resource server must not treat `org_role` as live: the hub
 re-checks the membership on every API call, and a role change or removal deletes that user's
 tokens for the organisation, so a client learns of it within one access-token lifetime at most.
 
