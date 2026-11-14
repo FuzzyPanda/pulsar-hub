@@ -1,6 +1,6 @@
 # Plan
 
-**Drafted 2026-11-13.** H0 to H3 are built, and the intake half of H4 (2026-11-13). H5 onward is not started. Tick items as they land.
+**Drafted 2026-11-13.** H0 to H3 are built, and the intake half of H4 (2026-11-13). The hub's side of the remote console was added on 2026-11-14. H5 onward is not started. Tick items as they land.
 
 ## Phases at a glance
 
@@ -73,8 +73,32 @@ protection (not yet set up).
 
 - [x] Apps launcher on the organisation overview: a code-defined product catalogue and
   per-organisation connected apps, managed by an Owner in Settings. `docs/PRODUCTS.md`.
-- [x] Each gateway can carry a console address, set by an Admin on the site page; the site page
-  and the Access Control tile link to it. A link only: the hub still never calls a gateway.
+- [x] ~~Each gateway can carry a console address; the site page and the Access Control tile link to
+  it.~~ Built 2026-11-13 and **removed 2026-11-14** on the owner's decision that the tile must not
+  open a link to an address on a site's own network. Replaced by the remote console, below.
+
+**The remote console (the owner's decisions of 2026-11-14)**
+
+A gateway's own web console, opened from anywhere with only a hub login: the gateway keeps an
+outbound connection open to the hub and the hub relays the console down it. The whole console, with
+safeguards: a fresh authenticator check for each session, Owners and Admins only, a short lifetime,
+and the audit log on both sides. Contract: `CONTRACTS.md`, "Remote console".
+
+- [x] Hub side: the relay service (`relay/`), sessions and their rules (`hub/console/`), the site
+  page and the Access Control tile, the contract, a conformance tool for the gateway side and a
+  fake gateway. Run on the homelab bench on 2026-11-14 with two fake gateways and a headless
+  browser: opening with and without a step-up prompt, a form, an upload, a 20 MB download, a
+  session reaching its 15-minute limit, End from the hub, and revocation in mid-session.
+- [ ] Gateway side, in `Pulsar-Access-Control`: the tunnel client, the local opt-in switch (off by
+  default), the gateway's own audit of remote sessions. **Not started.** Until it is, every real
+  gateway shows "gateway software too old".
+- [ ] Run against a real gateway. Nothing here has met one.
+- [ ] Production console origins: a separate registrable domain with a wildcard DNS record
+  (`CONSOLE_DOMAIN`), and its certificates. `Caddyfile.prod` is written for it and has never
+  served a request. With more than a few dozen gateways it needs a wildcard certificate (H7).
+- [ ] An independent security review of the relay and of `hub/console/` before either faces the
+  internet, as H1 had.
+- [ ] More than one relay. There is one, and its state is in memory.
 - [ ] Pulsar Rostering's side of the link (`/api/v1/auth/hub/start`, "sign in with Pulsar Hub")
   is being built in `pulsar-rostering`. Until it is live there, an Owner can point the tile at
   Rostering's front page with a launch path of `/`. See decision D8, which this does not close.
@@ -133,6 +157,14 @@ gateway yet**: it is tested against each side's own fakes and against each other
 
 The highest-risk surface in the whole offering. Do not start it early.
 
+**Read with the remote console in mind (2026-11-14).** H6 is about the hub itself asking a gateway
+to act, and none of it is built. But since the owner's decision that the remote console carries the
+gateway's whole console, an Owner or Admin can already do from far away whatever that console lets
+them do at a door, once the gateway side exists and someone on site has switched it on. The limits
+below ("only two actions", "never remote emergency unlock", "a reason") do not bind that path
+unless the gateway applies them to remote sessions, which it can: it is told which requests are
+remote and for whom. That is decision D9 in `DECISIONS.md`, and it is open.
+
 - [ ] Only two actions: a timed unlock pulse on one door, and lockdown of a site.
   **Never remote emergency unlock.**
 - [ ] Each action needs a fresh MFA step-up, a reason, and a role that allows it.
@@ -146,8 +178,9 @@ The highest-risk surface in the whole offering. Do not start it early.
 
 - [ ] Monthly per-organisation report: who can open which doors, after-hours entries, staff
   starts and ends.
-- [ ] Australian hosting, wildcard TLS, encrypted backups with a tested restore, staging
-  environment, uptime checks, status page.
+- [ ] Australian hosting, wildcard TLS (the hub's domain, and the separate console domain the
+  remote console needs), encrypted backups with a tested restore, staging environment, uptime
+  checks, status page.
 - [ ] Privacy policy, terms, data-processing terms, breach procedure before the first client.
 - [ ] Subscription billing through an off-the-shelf provider. Do not build invoicing.
 

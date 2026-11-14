@@ -6,7 +6,8 @@ with it, and connect Pulsar Rostering. This is for testing. For a real client, u
 
 Everything below assumes one machine for the hub (called `hubhost` here; use its LAN address), a
 gateway on the same network or your mesh VPN, and Rostering wherever you run it. The gateway and
-Rostering both call the hub; the hub calls neither, so only the hub needs to be reachable.
+Rostering both call the hub; the hub calls neither, so only the hub needs to be reachable. That
+includes the remote console (step 6): it runs down a connection the gateway opens.
 
 ## 1. The hub
 
@@ -104,13 +105,37 @@ The organisation's overview page starts with **Apps**. As an Owner, in **Setting
 - **Connect Pulsar Rostering** and enter where it runs. On a bench where Rostering is on the same
   machine as the hub, on port 8080, enter `http://{host}:8080`: `{host}` becomes whichever name
   you opened the hub with, so the link works by LAN address and by mesh VPN name alike.
-- **Connect Pulsar Access Control.** It has no address of its own. As an Admin, open the site's
-  page and, under **Gateway → Door controller console**, enter the gateway's own address (for
-  example `https://192.168.1.50/ui/`). The site page then has **Open door controller console**,
-  and the Access Control tile lists the site. The console opens from the site's network and asks
-  for the gateway's own sign-in.
+- **Connect Pulsar Access Control.** It has no address to enter. Its tile then lists each site
+  with a paired gateway and says where that gateway's remote console stands (step 6).
 
 Both can also be done from a shell: `docker compose exec web python manage.py connect_app --help`.
+
+## 6. The remote console
+
+A gateway's own web console, opened through the hub. Add to `.env` and start again
+(`docker compose up -d`):
+
+| Variable | Value on a plain-HTTP bench |
+|---|---|
+| `CONSOLE_ORIGIN_TEMPLATE` | `http://{host}:8081` (every console on one extra port of the hub's own host; accepted only because `INSECURE_COOKIES` is `True`) |
+| `RELAY_INTERNAL_SECRET` | `openssl rand -hex 32` |
+
+The site's page and the Access Control tile now show **Remote console** with one of: available,
+switched off on the gateway, gateway not connected, gateway software too old. A gateway whose
+software has no remote console (every released gateway, as of 2026-11-14) shows "too old".
+
+To see it work without one, run the fake gateway that the hub's tests use. Create a pairing code
+for a site with no gateway, then, on any machine that can reach the hub and has Python and aiohttp:
+
+```bash
+python tools/fake_gateway.py --hub http://hubhost --pair XXXX-XXXX-XXXX
+```
+
+The site's page says **Available**. As an Owner or Admin press **Open remote console**, enter a
+code from your authenticator app, and a small stand-in console opens in a new tab on port 8081.
+The page lists the session, with **End**; `--console-off` starts the fake gateway with its switch
+off. For someone building the gateway side, `python tools/console_conformance.py --help` plays the
+hub instead and checks a gateway against the contract.
 
 ## What to check, and what "working" looks like
 
@@ -127,4 +152,9 @@ Both can also be done from a shell: `docker compose exec web python manage.py co
 - Plain HTTP on a LAN: anyone on that network can read the traffic, including the gateway's
   credential. Fine for a bench; not for anything real.
 - No email is sent. Links are in the log.
+- The remote console's bench mode puts every gateway's console on one origin that shares the hub's
+  host name. A gateway's cookies and the hub's are still kept apart (the relay holds the
+  gateway's), but the consoles share the browser's storage with each other and are "same-site"
+  with the hub. Production gives each gateway its own origin on a separate domain; do not put the
+  bench mode on the internet.
 - Passkeys and sign-in with Microsoft or Google need HTTPS and a real address.
