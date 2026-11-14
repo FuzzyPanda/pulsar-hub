@@ -3,6 +3,7 @@
 #   web     wait for the database, migrate, create the cache table, then serve with gunicorn.
 #           The web container is the only one that migrates (migrate-before-traffic).
 #   worker  wait until web has finished migrating, then run the django-q2 cluster.
+#   relay   run the remote-console relay (python -m relay). It has no database and waits for web itself.
 #   other   run the given command as-is, e.g. `docker compose run --rm web python manage.py shell`.
 set -eu
 
@@ -86,6 +87,12 @@ case "$role" in
         unset DATABASE_OWNER_URL POSTGRES_PASSWORD
         log "starting django-q2 cluster..."
         exec python manage.py qcluster
+        ;;
+    relay)
+        # No database, no Django. It announces itself to web and retries until web answers.
+        unset DATABASE_URL DATABASE_OWNER_URL POSTGRES_PASSWORD DJANGO_SECRET_KEY OIDC_RSA_PRIVATE_KEY
+        log "starting the remote-console relay..."
+        exec python -m relay
         ;;
     *)
         # One-off commands (`docker compose run --rm web python manage.py ...`). Add

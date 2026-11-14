@@ -1,8 +1,11 @@
 # Pulsar Hub — base Docker Compose. Builds from source; production layers
 # docker-compose.prod.yml on top (published image, production Caddyfile, restart policies).
 #
-# Invariants: only caddy publishes host ports; db and web stay on the internal network; dependents
-# wait on health checks; web migrates before it serves and the worker waits for web.
+# Invariants: only caddy publishes host ports; db, web and relay stay on the internal network;
+# dependents wait on health checks; web migrates before it serves and the worker waits for web.
+# The relay (remote console) holds gateways' tunnels. It has no database address and none of the
+# web service's secrets: it shares one secret with web (RELAY_INTERNAL_SECRET) and asks web for
+# every decision. Caddy routes it the tunnel address and the console origins, never its control port.
 #
 # Required in .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DJANGO_SECRET_KEY and the rest
 # of .env.example. The database URLs are composed below from the POSTGRES_* values.
@@ -92,6 +95,33 @@ services:
         condition: service_healthy       # web owns migrations; the worker starts after them
     networks: [hub-net]
 
+  relay:
+    <<: *hardened
+    image: pulsar-hub:local              # same image, third role
+    command: ["relay"]
+    # Deliberately no env_file: only what the relay needs, named one by one.
+    environment:
+      RELAY_INTERNAL_SECRET: ${RELAY_INTERNAL_SECRET:-}
+      CONSOLE_ORIGIN_TEMPLATE: ${CONSOLE_ORIGIN_TEMPLATE:-}
+      CONSOLE_MAX_UPLOAD_MB: ${CONSOLE_MAX_UPLOAD_MB:-16}
+      HUB_BASE_URL: ${HUB_BASE_URL:?set in .env}
+      RELAY_HUB_URL: http://web:8000
+      RELAY_ALLOW_PLAIN_HTTP: ${INSECURE_COOKIES:-false}
+      NUM_PROXIES: ${NUM_PROXIES:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      web:
+        condition: service_healthy
+    expose: ["8001", "8002", "8003"]     # tunnel, console, control: internal only
+    networks: [hub-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/control/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 2s
+
   caddy:
     image: caddy:2.8-alpine
     # no-new-privileges only: caddy runs as root in its image and binds 80/443.
@@ -103,6 +133,9 @@ services:
       - "80:80"                          # the ONLY service that publishes to the host
       - "443:443"
       - "443:443/udp"                    # HTTP/3
+      # Bench only: every gateway's remote console on one extra plain-HTTP port (the development
+      # Caddyfile). Production serves consoles on their own host names on 443 and drops this.
+      - "${CONSOLE_BENCH_PORT:-8081}:8081"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

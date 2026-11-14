@@ -5,6 +5,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # Required in .env: HUB_IMAGE (registry path without tag), HUB_DOMAIN, ACME_EMAIL.
+# For the remote console also: CONSOLE_DOMAIN, CONSOLE_ORIGIN_TEMPLATE, RELAY_INTERNAL_SECRET.
 # Optional: HUB_IMAGE_TAG (default latest; pin a commit SHA for change control).
 #
 # Never run `up --build` with this overlay: it would replace the published image with a local build.
@@ -22,10 +23,21 @@ services:
     image: ${HUB_IMAGE:?set HUB_IMAGE}:${HUB_IMAGE_TAG:-latest}
     restart: unless-stopped
 
+  relay:
+    image: ${HUB_IMAGE:?set HUB_IMAGE}:${HUB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+
   caddy:
     restart: unless-stopped
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
     environment:
       HUB_DOMAIN: ${HUB_DOMAIN:?set HUB_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      # The domain remote consoles are served on, one host name per gateway. A different
+      # registrable domain from HUB_DOMAIN. Unset = no console host is ever served.
+      CONSOLE_DOMAIN: ${CONSOLE_DOMAIN:-console.invalid}
     volumes:
       - ./infra/caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
