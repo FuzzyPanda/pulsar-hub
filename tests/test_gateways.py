@@ -812,6 +812,238 @@ def test_reading_sites_costs_the_same_however_many_have_no_gateway(client, world
         assert len(site_rows(client, world_a)) == 22
 
 
+# --- job positions (Rostering's proposal, hub steps 4.1 to 4.3) -------------------------------------
+
+
+def with_positions(world, positions, **extra) -> bytes:
+    body = kept(world)
+    body["people"][0] |= {"positions": positions} | extra
+    return json.dumps(body).encode()
+
+
+def members(group) -> dict:
+    """person id -> source, for one group."""
+    return dict(AccessGroupMember.all_organisations.filter(access_group=group).values_list("person_id", "source"))
+
+
+def test_the_hub_says_what_it_accepts_to_any_service_token(client, world_a):
+    from hub.api.models import ServiceToken
+
+    url = reverse("api_capabilities")
+    assert client.get(url).json()["code"] == "not_authenticated"
+    assert client.get(url, **gateway_headers(world_a)).status_code == 401
+    with organisation_context(world_a.organisation):
+        ServiceToken.objects.update(scopes=["events:read"])  # no directory scope at all
+    response = client.get(url, **service_headers(world_a))
+    assert response.status_code == 200
+    assert response.json() == {
+        "contract": 2,
+        "directory": {
+            "person_fields": ["person_ref", "name", "work_email", "status", "positions"],
+            "site_fields": ["site_ref", "name", "address", "timezone", "is_active"],
+        },
+    }
+    # Rostered windows are not accepted, so they are not advertised: a sender must not send them.
+    assert "rostered_windows" not in response.json()
+    assert world_a.marker not in response.content.decode()
+
+
+def test_what_is_advertised_is_exactly_what_the_directory_takes(client, world_a):
+    """The advertisement and the allow-list are one list: every advertised key is taken, and one
+    more is still refused whole (rule 11)."""
+    rostering_world(world_a)
+    advertised = client.get(reverse("api_capabilities"), **service_headers(world_a)).json()["directory"]
+    body = kept(world_a)
+    assert set(body["people"][0]) | {"positions"} == set(advertised["person_fields"])
+    assert set(body["sites"][0]) | {"is_active"} == set(advertised["site_fields"])
+    body["people"][0]["positions"] = ["Guard"]
+    body["sites"][0]["is_active"] = True
+    assert put_directory(client, world_a, json.dumps(body).encode()).status_code == 200
+    body["people"][0]["licence_number"] = "123"
+    refused = put_directory(client, world_a, json.dumps(body).encode())
+    assert refused.status_code == 400 and refused.json()["code"] == "unexpected_field"
+
+
+def test_positions_are_cleaned_stored_and_shown_and_twice_changes_nothing(client, world_a):
+    rostering_world(world_a)
+    sent = ["  supervisor ", "Guard", "guard", "", "Night\tWatch" + "x" * 80]
+    first = put_directory(client, world_a, with_positions(world_a, sent))
+    assert first.status_code == 200 and first.json()["people_updated"] == 1 and first.json()["rejected"] == []
+    person = Person.all_organisations.get(pk=world_a.person.pk)
+    assert person.positions == sorted(["supervisor", "Guard", ("Night Watch" + "x" * 80)[:60]])
+    assert put_directory(client, world_a, with_positions(world_a, sent)).json()["people_updated"] == 0
+    assert AuditEvent.all_organisations.filter(action="directory.snapshot_applied").count() == 1
+    # Read back by a service, and shown on the person's page.
+    people = {p["person_ref"]: p for p in client.get(reverse("api_people"), **service_headers(world_a)).json()}
+    assert people[str(world_a.person.pk)]["positions"] == person.positions
+    f.sign_in(client, world_a.manager, mfa=True)
+    page = client.get(reverse("person_detail", kwargs={"org_slug": world_a.organisation.slug, "person_id": person.pk}))
+    assert "Job positions: Guard" in page.content.decode()
+
+
+def test_a_row_that_says_nothing_about_positions_leaves_them_and_an_empty_list_clears_them(client, world_a):
+    """Silence is not "no position": a sender that stops sending positions must not take away the
+    access they gave. Only an explicit list changes them."""
+    rostering_world(world_a)
+    put_directory(client, world_a, with_positions(world_a, ["Guard"]))
+    silent = put_directory(client, world_a, json.dumps(kept(world_a)).encode())
+    assert silent.json()["people_updated"] == 0
+    assert Person.all_organisations.get(pk=world_a.person.pk).positions == ["Guard"]
+    put_directory(client, world_a, with_positions(world_a, []))
+    assert Person.all_organisations.get(pk=world_a.person.pk).positions == []
+
+
+@pytest.mark.parametrize("bad", ["Guard", {"Guard": True}, ["Guard", 7], [f"P{n}" for n in range(21)], None])
+def test_positions_that_are_not_a_short_list_of_names_reject_that_row_only(client, world_a, bad):
+    rostering_world(world_a)
+    put_directory(client, world_a, with_positions(world_a, ["Guard"]))
+    other = str(uuid.uuid4())
+    body = json.loads(with_positions(world_a, bad))
+    body["people"].append({"person_ref": other, "name": "Taken On", "positions": ["Guard"]})
+    data = put_directory(client, world_a, json.dumps(body).encode()).json()
+    assert data["rejected"] == [
+        {
+            "person_ref": str(world_a.person.pk),
+            "code": "invalid_row",
+            "reason": "A person's positions must be a list of at most 20 names.",
+        }
+    ]
+    assert Person.all_organisations.get(pk=world_a.person.pk).positions == ["Guard"]  # left as they were
+    assert Person.all_organisations.get(pk=other).positions == ["Guard"]
+
+
+def test_a_position_a_group_names_puts_its_holders_in_the_group_and_takes_them_out(client, world_a):
+    """The proposal's acceptance test 3, and the point of it: a starter with a rostered position
+    can enter without anyone also adding them in the hub, and loses it with the position."""
+    rostering_world(world_a)
+    group = world_a.access_group  # opens world_a.site; world_a.person is in it by hand
+    with organisation_context(world_a.organisation):
+        guards = f.AccessGroupFactory(organisation=world_a.organisation, name="Guards")
+        f.AccessGroupSiteFactory(organisation=world_a.organisation, access_group=guards, site=world_a.site)
+        with pytest.raises(PermissionDenied):
+            access.set_group_positions(guards, ["Guard"], actor=actor(world_a, "manager"))
+        access.set_group_positions(guards, [" guard ", "GUARD", ""], actor=actor(world_a, "admin"))
+        access.set_group_positions(group, ["Guard"], actor=actor(world_a, "admin"))
+    starter = str(uuid.uuid4())
+    body = json.loads(with_positions(world_a, ["Guard"]))
+    body["people"].append({"person_ref": starter, "name": "New Starter", "positions": ["GUARD", "Driver"]})
+    version = get_access(client, world_a).json()["version"]
+    put_directory(client, world_a, json.dumps(body).encode())
+
+    # Derived where there was nothing; the hand-made membership is left exactly as it was.
+    assert members(guards) == {world_a.person.pk: "positions", uuid.UUID(starter): "positions"}
+    assert members(group) == {world_a.person.pk: "manual", uuid.UUID(starter): "positions"}
+    snapshot = get_access(client, world_a).json()
+    assert snapshot["version"] != version
+    assert {p["name"]: p["access_groups"] for p in snapshot["people"]}["New Starter"] == sorted([group.name, "Guards"])
+    audit = AuditEvent.all_organisations.get(action="directory.snapshot_applied").data
+    assert (audit["access_granted_by_position"], audit["access_removed_by_position"]) == (3, 0)
+
+    # The same list again: nothing changes, and the gateway's version holds.
+    version = snapshot["version"]
+    put_directory(client, world_a, json.dumps(body).encode())
+    assert get_access(client, world_a).json()["version"] == version
+
+    # Positions gone: only the derived memberships go.
+    body["people"][0]["positions"] = []
+    body["people"][1]["positions"] = ["Driver"]
+    put_directory(client, world_a, json.dumps(body).encode())
+    assert members(guards) == {} and members(group) == {world_a.person.pk: "manual"}
+    after = get_access(client, world_a).json()
+    assert [p["name"] for p in after["people"]] == [world_a.person.name] and after["version"] != version
+
+
+def test_changing_a_groups_positions_recomputes_at_once_and_is_audited(client, world_a):
+    rostering_world(world_a)
+    put_directory(client, world_a, with_positions(world_a, ["Guard", "Supervisor"]))
+    with organisation_context(world_a.organisation):
+        guards = f.AccessGroupFactory(organisation=world_a.organisation, name="Guards")
+        changed = access.set_group_positions(guards, ["Supervisor", "Cleaner"], actor=actor(world_a, "admin"))
+        assert changed == {"added": 1, "removed": 0} and members(guards) == {world_a.person.pk: "positions"}
+        event = AuditEvent.all_organisations.get(action="access.group_positions_changed")
+        assert event.data == {"added": ["Cleaner", "Supervisor"], "removed": [], "people_added": 1, "people_removed": 0}
+        # Saving the same list again is not a change.
+        access.set_group_positions(guards, ["cleaner", "SUPERVISOR"], actor=actor(world_a, "admin"))
+        assert AuditEvent.all_organisations.filter(action="access.group_positions_changed").count() == 1
+        changed = access.set_group_positions(guards, ["Cleaner"], actor=actor(world_a, "admin"))
+        assert changed == {"added": 0, "removed": 1} and members(guards) == {}
+        with pytest.raises(ValidationError):
+            access.set_group_positions(guards, [f"P{n}" for n in range(51)], actor=actor(world_a, "admin"))
+
+
+def test_hand_made_and_position_memberships_never_overwrite_each_other(client, world_a):
+    rostering_world(world_a)
+    put_directory(client, world_a, with_positions(world_a, ["Guard"]))
+    person = world_a.person
+    with organisation_context(world_a.organisation):
+        guards = f.AccessGroupFactory(organisation=world_a.organisation, name="Guards")
+        access.set_group_positions(guards, ["Guard"], actor=actor(world_a, "admin"))
+        # Through a position: not removable by hand (it would only come back).
+        with pytest.raises(ValidationError, match="through a job position"):
+            access.remove_person_from_group(guards, person, actor=actor(world_a, "manager"))
+        assert members(guards) == {person.pk: "positions"}
+        # Added by hand as well: it becomes a hand-made membership and outlasts the position.
+        access.add_person_to_group(guards, person, actor=actor(world_a, "manager"))
+        assert members(guards) == {person.pk: "manual"}
+        assert AuditEvent.all_organisations.filter(action="access.granted").latest("occurred_at").data == {
+            "group": "Guards",
+            "was": "from a position",
+        }
+    put_directory(client, world_a, with_positions(world_a, []))
+    assert members(guards) == {person.pk: "manual"}
+    put_directory(client, world_a, with_positions(world_a, ["Guard"]))
+    with organisation_context(world_a.organisation):
+        # Removing the hand-made one while the position still gives it: still a member, and told so.
+        assert access.remove_person_from_group(guards, person, actor=actor(world_a, "manager")) is True
+        assert members(guards) == {person.pk: "positions"}
+        access.set_group_positions(guards, [], actor=actor(world_a, "admin"))
+        assert access.remove_person_from_group(guards, person, actor=actor(world_a, "manager")) is False
+
+
+def test_an_ended_person_is_told_to_the_gateway_as_before_whatever_their_positions(client, world_a):
+    """Ending is the removal that matters, and positions must not soften it."""
+    rostering_world(world_a)
+    with organisation_context(world_a.organisation):
+        access.set_group_positions(world_a.access_group, ["Guard"], actor=actor(world_a, "admin"))
+        f.PersonFactory(organisation=world_a.organisation, name="Someone Else")
+    starter = str(uuid.uuid4())
+    body = kept(world_a)
+    body["people"].append({"person_ref": starter, "name": "New Starter", "positions": ["Guard"]})
+    put_directory(client, world_a, json.dumps(body).encode())
+    assert "New Starter" in [p["name"] for p in get_access(client, world_a).json()["people"]]
+    # Ended with the position still on the row: inactive at the gateway.
+    body["people"][-1] |= {"status": "ended"}
+    put_directory(client, world_a, json.dumps(body).encode())
+    sent = {p["name"]: p["active"] for p in get_access(client, world_a).json()["people"]}
+    assert sent["New Starter"] is False
+    # Ended and without the position (what Rostering sends): gone from the list, which a gateway
+    # also treats as removal.
+    body["people"][-1] |= {"positions": []}
+    put_directory(client, world_a, json.dumps(body).encode())
+    assert "New Starter" not in [p["name"] for p in get_access(client, world_a).json()["people"]]
+
+
+def test_the_console_sets_a_groups_positions_with_step_up(client, world_a):
+    rostering_world(world_a)
+    put_directory(client, world_a, with_positions(world_a, ["Guard"]))
+    group = world_a.access_group
+    kwargs = {"org_slug": world_a.organisation.slug, "group_id": group.pk}
+    f.sign_in(client, world_a.admin, mfa=True)
+    page = client.get(reverse("group_detail", kwargs=kwargs)).content.decode()
+    assert "Job positions" in page and 'value="Guard"' in page and f'value="{world_a.marker} Ward" checked' in page
+    data = {"positions": [f"{world_a.marker} Ward"], "new_position": "guard"}
+    assert client.post(reverse("group_positions", kwargs=kwargs), data).status_code == 302
+    with organisation_context(world_a.organisation):
+        names = sorted(link.position for link in group.position_links.all())
+    # (The person is in the group by hand already, so the position adds nobody.)
+    assert names == sorted([f"{world_a.marker} Ward", "guard"]) and members(group) == {world_a.person.pk: "manual"}
+    # A Manager sees the positions but cannot change them.
+    f.sign_in(client, world_a.manager, mfa=True)
+    assert client.post(reverse("group_positions", kwargs=kwargs), {"positions": []}).status_code in (403, 404)
+    with organisation_context(world_a.organisation):
+        assert group.position_links.count() == 2
+
+
 # --- every refusal carries a code (H1 of Rostering's review) ---------------------------------------
 
 

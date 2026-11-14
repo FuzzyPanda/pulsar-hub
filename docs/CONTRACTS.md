@@ -1,6 +1,6 @@
 # Contracts — ids, pairing, calls and events
 
-**Proposed 2026-11-13; refusal codes, row-by-row directory and gateway health added 2026-11-14.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
+**Proposed 2026-11-13; refusal codes, row-by-row directory, gateway health, the capabilities call and job positions added 2026-11-14.** "Identifiers", "Sign-in" and the `/api/v1/` calls marked H1 are built; the
 sections on gateways and Pulsar Rostering are built on the hub side. If an implementation differs from this file, change
 this file in the same pull request.
 
@@ -278,6 +278,7 @@ organisation.
 |---|---|---|
 | `PUT /api/v1/directory` | `directory:write` | The full list of people and sites |
 | `GET /api/v1/events?after=<cursor>` | `events:read` | Door and attendance events, oldest first |
+| `GET /api/v1/capabilities` | none (any service token) | What this hub accepts beyond the first contract |
 | `GET /api/v1/people`, `GET /api/v1/sites` | `directory:read` | The hub's copy, and for each site the hub's view of its gateway (also open to Managers with a user token) |
 
 A token for Pulsar Rostering needs `directory:write` and `events:read`. `directory:read` is
@@ -285,11 +286,26 @@ optional: with it Rostering also shows whether each site's gateway is in contact
 what it sent is what the hub holds; without it those two calls answer `403 missing_scope` and
 everything else carries on.
 
+`GET /api/v1/capabilities` says what the hub takes, so that a sender only sends what will be taken:
+
+```json
+{"contract": 2,
+ "directory": {"person_fields": ["person_ref", "name", "work_email", "status", "positions"],
+               "site_fields": ["site_ref", "name", "address", "timezone", "is_active"]}}
+```
+
+`person_fields` and `site_fields` are the complete lists of keys a directory row may carry; they are
+the same lists the directory call checks rows against. A sender sends `positions` only while it is
+listed. A key that is not in this answer (for example `rostered_windows`) is a feature this hub
+does not have: do not send it. A hub older than this call answers `404`, which means the first
+contract and nothing more.
+
 `PUT /api/v1/directory` is a snapshot. Sending it twice changes nothing; a missed one is repaired
 by the next.
 
 ```json
-{"people": [{"person_ref": "<uuid>", "name": "Sam Lee", "work_email": "sam@example.com", "status": "active"}],
+{"people": [{"person_ref": "<uuid>", "name": "Sam Lee", "work_email": "sam@example.com", "status": "active",
+             "positions": ["Guard", "Supervisor"]}],
  "sites":  [{"site_ref": "<uuid>", "name": "Main clinic", "address": "1 High St, Kew VIC 3101",
              "timezone": "Australia/Melbourne", "is_active": true}],
  "allow_empty": false}
@@ -301,6 +317,20 @@ by the next.
 - Only these fields exist. Rostering must never send, and the hub has nowhere to keep, pay rates,
   bank details, dates of birth, licence numbers, phone numbers or home addresses (rule 11).
 - `work_email` may be `null` or left out. `is_active` on a site and `allow_empty` are optional.
+- `positions` is optional: the names of the person's current job positions, at most 20, each cut
+  to 60 characters and made plain like a name; blanks and repeats (whatever their case) are dropped.
+  **A row that carries the key replaces the person's positions; a row without it leaves them as
+  they were.** So a sender that stops sending positions does not take anyone's access away; an
+  empty list does. Anything that is not a list of names rejects that row (`invalid_row`).
+
+**What positions do.** An Admin can name job positions on an access group in the hub console
+("Guard" on "Guards"). Whoever holds a named position is in that group for as long as they hold it,
+and so may enter every site the group opens; the match ignores case. Such a membership is kept apart
+from one made by hand: it goes when the position goes or the group stops naming it, and a hand-made
+membership in the same group is never touched. Memberships are worked out in the same transaction
+as the snapshot, so a gateway's next pull has them; nothing changes on the gateway side, which
+receives access groups as before. Rostering never decides who may enter: it says what a person's
+positions are, and the hub's own mapping decides what a position opens.
 
 `200`:
 
@@ -362,7 +392,7 @@ groups) has not been confirmed at that site's doors yet. `last_contact_at` is th
 call of any kind, to the half minute. Nothing about a door is in this answer: no door names, states
 or modes. It is read-only and tells a reader how far to trust door attendance from a site, not how
 to change anything there. `GET /api/v1/people` is the hub's copy of the people, in the shape of
-the `people` rows above; a sender can read both back to check that what it sent is what the hub
+the `people` rows above (with `positions`); a sender can read both back to check that what it sent is what the hub
 holds. Both answers are the whole list in one reply, not pages: at most the 20,000 people
 and 20,000 sites a snapshot may carry.
 

@@ -99,6 +99,12 @@ land, and update `docs/CONTRACTS.md` in the same change whenever an implementati
   take is reported in `rejected` and leaves whoever it names untouched; a removal is applied even
   from an otherwise bad row. Only a snapshot that is the wrong shape, carries a key outside the
   allow-list, or would leave nobody active is refused whole.
+- **A membership has a source.** `manual` rows are made by people in the console; `positions` rows
+  are made and removed only by `hub.access.services.sync_position_memberships`, from the positions
+  on each person and the positions each group names. Never write a `positions` row anywhere else,
+  and run the sync in the same transaction as whatever changed a person's positions or a group's.
+  The directory allow-list and what `GET /api/v1/capabilities` advertises are one list
+  (`DIRECTORY_PERSON_FIELDS`): add a key there or nowhere.
 - **What a gateway is sent is a complete state with a version**, never a change (rule 5). Anything
   that alters who may enter a site must alter `desired_access(site)`, and nothing else may.
 - **Reaching across organisations** (`.all_organisations`, `_base_manager`, raw SQL) needs

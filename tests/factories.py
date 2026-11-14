@@ -158,7 +158,7 @@ def issue_access_token(user, organisation, raw: str, *, expires_in: int = 600, s
 
 # --- directory, access groups, gateways (H2 and H3) ----------------------------------------------
 
-from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupSite  # noqa: E402
+from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupPosition, AccessGroupSite  # noqa: E402
 from hub.api.models import Scope, ServiceToken  # noqa: E402
 from hub.directory.models import Person, Site  # noqa: E402
 from hub.gateways.models import Gateway, GatewayEvent, PairingCode  # noqa: E402
@@ -193,6 +193,15 @@ class AccessGroupMemberFactory(ScopedFactory):
 
     access_group = factory.SubFactory(AccessGroupFactory, organisation=factory.SelfAttribute("..organisation"))
     person = factory.SubFactory(PersonFactory, organisation=factory.SelfAttribute("..organisation"))
+
+
+class AccessGroupPositionFactory(ScopedFactory):
+    class Meta:
+        model = AccessGroupPosition
+
+    access_group = factory.SubFactory(AccessGroupFactory, organisation=factory.SelfAttribute("..organisation"))
+    position = factory.Sequence(lambda n: f"Position {n}")
+    position_key = factory.LazyAttribute(lambda o: o.position.casefold())
 
 
 class AccessGroupSiteFactory(ScopedFactory):

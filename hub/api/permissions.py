@@ -37,6 +37,13 @@ class IsGateway(BasePermission):
         return True
 
 
+class IsServiceToken(BasePermission):
+    """Any live service token, whatever its scopes."""
+
+    def has_permission(self, request, view) -> bool:
+        return getattr(request._request, "service_token", None) is not None
+
+
 class HasScope(BasePermission):
     """A service token holding the view's `required_scope`, or (where the view sets
     `minimum_role`) a member with at least that role using a user token.

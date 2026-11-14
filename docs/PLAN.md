@@ -85,6 +85,12 @@ protection (not yet set up).
 - [x] `Site` (`site_ref`, name, address, timezone).
 - [x] `AccessGroup` per organisation ("Managers", "Cleaners"), assigned to people. A group also names
   the sites it opens, which is what makes access multi-site.
+- [x] Job positions from Pulsar Rostering (2026-11-14, the owner's decision that door access is
+  managed in the hub or the gateway, not in Rostering): a person's positions arrive on the
+  directory snapshot, and an access group can name positions, so whoever holds one is in the group
+  for as long as they hold it. `GET /api/v1/capabilities` says what the hub accepts. Rostered
+  windows ("the card only works while rostered") are **not** built: they reach a door decision and
+  need the gateway's own review first.
 - [x] Pulsar Rostering link, per decision D3: people and sites come from Rostering where an
   organisation rosters; the hub is the source where it does not. One direction per organisation,
   never both. Rostering sends a full snapshot with a service token (`PUT /api/v1/directory`).

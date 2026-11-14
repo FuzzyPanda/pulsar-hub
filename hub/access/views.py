@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
 from hub.access import services
-from hub.access.models import AccessGroup, AccessGroupMember
+from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupPosition
 from hub.accounts.stepup import step_up_required
 from hub.directory.models import Person, Site
 from hub.organisations.models import Role
@@ -51,9 +51,19 @@ def group_detail(request, org_slug: str, group_id):
     members = AccessGroupMember.objects.filter(access_group=group).select_related("person").order_by("person__name")
     member_ids = [m.person_id for m in members]
     site_ids = set(group.site_links.values_list("site_id", flat=True))
+    # Positions the group names, and the others people currently hold, to tick.
+    named = {link.position_key: link.position for link in AccessGroupPosition.objects.filter(access_group=group)}
+    held: dict[str, str] = {}
+    for positions in Person.objects.exclude(positions=[]).values_list("positions", flat=True):
+        for name in positions:
+            held.setdefault(services.position_key(name), name)
     context = {
         "group": group,
         "members": members,
+        "position_rows": [
+            {"name": name, "included": key in named}
+            for key, name in sorted({**held, **named}.items(), key=lambda item: item[1].casefold())
+        ],
         "candidates": Person.objects.filter(status=Person.Status.ACTIVE).exclude(pk__in=member_ids),
         "site_rows": [
             {"site": site, "included": site.pk in site_ids}
@@ -115,6 +125,27 @@ def group_sites(request, org_slug: str, group_id):
 
 
 @require_POST
+@role_required(Role.ADMIN)
+@step_up_required
+def group_positions(request, org_slug: str, group_id):
+    """Which job positions put a person in the group. Everyone who holds one joins it at once, so
+    like the group's sites this can open doors, hence the step-up."""
+    group = get_object_or_404(AccessGroup.objects, pk=group_id)
+    try:
+        wanted = [*request.POST.getlist("positions"), request.POST.get("new_position", "")]
+        changed = services.set_group_positions(group, wanted, actor=Actor.from_request(request), request=request)
+    except ERRORS as exc:
+        _flash_errors(request, exc)
+    else:
+        messages.success(
+            request,
+            f"Saved. {changed['added']} added to the group and {changed['removed']} removed by their position. "
+            "Each site applies the change on its next sync.",
+        )
+    return redirect("group_detail", org_slug=org_slug, group_id=group.pk)
+
+
+@require_POST
 @role_required(Role.MANAGER)
 def group_member_add(request, org_slug: str, group_id):
     group = get_object_or_404(AccessGroup.objects, pk=group_id)
@@ -132,9 +163,12 @@ def group_member_remove(request, org_slug: str, group_id):
     group = get_object_or_404(AccessGroup.objects, pk=group_id)
     person = get_object_or_404(Person.objects, pk=request.POST.get("person") or None)
     try:
-        services.remove_person_from_group(group, person, actor=Actor.from_request(request), request=request)
+        still = services.remove_person_from_group(group, person, actor=Actor.from_request(request), request=request)
     except ERRORS as exc:
         _flash_errors(request, exc)
+    else:
+        if still:
+            messages.info(request, f"{person.name} is still in {group.name} through a job position.")
     return _back(request, org_slug, group, person)
 
 

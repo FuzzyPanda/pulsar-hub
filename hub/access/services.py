@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupSite
+from hub.access.models import AccessGroup, AccessGroupMember, AccessGroupPosition, AccessGroupSite
 from hub.directory.models import Person, Site
 from hub.directory.services import plain_text
 from hub.organisations.context import require_organisation
@@ -54,38 +54,149 @@ def delete_group(group: AccessGroup, *, actor: Actor, request=None) -> None:
     name, pk = group.name, group.pk
     AccessGroupMember.objects.filter(access_group=group).delete()
     AccessGroupSite.objects.filter(access_group=group).delete()
+    AccessGroupPosition.objects.filter(access_group=group).delete()
     group.delete()
     _audit(actor, "access.group_deleted", request=request, target_label=name, data={**data, "group_id": str(pk)})
 
 
 @transaction.atomic
 def add_person_to_group(group: AccessGroup, person: Person, *, actor: Actor, request=None) -> None:
+    """Put `person` in `group` by hand. If a position already put them there, the membership
+    becomes a hand-made one, so it outlasts the position."""
     actor.require_member(Role.MANAGER)
-    _member, created = AccessGroupMember.objects.get_or_create(access_group=group, person=person)
-    if created:
+    member, created = AccessGroupMember.objects.get_or_create(access_group=group, person=person)
+    kept = not created and member.source == AccessGroupMember.Source.POSITIONS
+    if kept:
+        member.source = AccessGroupMember.Source.MANUAL
+        member.save(update_fields=["source"])
+    if created or kept:
         _audit(
             actor,
             "access.granted",
             request=request,
             target=person,
             target_label=person.name,
-            data={"group": group.name},
+            data={"group": group.name, **({"was": "from a position"} if kept else {})},
         )
 
 
 @transaction.atomic
-def remove_person_from_group(group: AccessGroup, person: Person, *, actor: Actor, request=None) -> None:
+def remove_person_from_group(group: AccessGroup, person: Person, *, actor: Actor, request=None) -> bool:
+    """Take a hand-made membership away. Returns True if the person is still in the group
+    afterwards, because one of the group's positions puts them there.
+
+    A membership that comes from a position is not removed here: it would be back the next time
+    positions are worked out. The way to end it is to change the group's positions, or the
+    person's position where it is managed."""
     actor.require_member(Role.MANAGER)
-    deleted, _ = AccessGroupMember.objects.filter(access_group=group, person=person).delete()
-    if deleted:
+    member = AccessGroupMember.objects.filter(access_group=group, person=person).first()
+    if member is None:
+        return False
+    if member.source == AccessGroupMember.Source.POSITIONS:
+        raise ValidationError(
+            f"{person.name} is in {group.name} through a job position. Change the group's positions, "
+            "or the person's position, to remove them."
+        )
+    member.delete()
+    _audit(
+        actor,
+        "access.removed",
+        request=request,
+        target=person,
+        target_label=person.name,
+        data={"group": group.name},
+    )
+    sync_position_memberships()
+    return AccessGroupMember.objects.filter(access_group=group, person=person).exists()
+
+
+# --- positions that give a group ------------------------------------------------------------------
+
+MAX_POSITIONS_PER_GROUP = 50
+
+
+def position_key(name) -> str:
+    """How two spellings of a position are compared: as plain text, ignoring case."""
+    return plain_text(name, 60).casefold()
+
+
+def sync_position_memberships() -> dict:
+    """Make the memberships that come from positions equal to what the positions say, for the
+    whole organisation. Returns how many were added and removed.
+
+    A person holds a group through a position when the group names a position the person has.
+    Only memberships whose source is `positions` are created or deleted here. One made by hand is
+    never touched: if a position would also give it, nothing is added, and if the position goes,
+    the hand-made membership stays. Safe to run at any time and any number of times.
+
+    The caller audits: this runs inside a directory snapshot or a change of a group's positions,
+    and that event carries the counts.
+    """
+    groups_by_key: dict[str, set] = {}
+    for group_id, key in AccessGroupPosition.objects.values_list("access_group_id", "position_key"):
+        groups_by_key.setdefault(key, set()).add(group_id)
+    wanted = set()
+    if groups_by_key:
+        for person_id, positions in Person.objects.exclude(positions=[]).values_list("pk", "positions"):
+            for name in positions if isinstance(positions, list) else []:
+                for group_id in groups_by_key.get(position_key(name), ()):
+                    wanted.add((group_id, person_id))
+    derived, manual = {}, set()
+    for pk, group_id, person_id, source in AccessGroupMember.objects.values_list(
+        "pk", "access_group_id", "person_id", "source"
+    ):
+        if source == AccessGroupMember.Source.POSITIONS:
+            derived[(group_id, person_id)] = pk
+        else:
+            manual.add((group_id, person_id))
+    stale = [pk for pair, pk in derived.items() if pair not in wanted]
+    missing = sorted(wanted - derived.keys() - manual, key=str)
+    if stale:
+        AccessGroupMember.objects.filter(pk__in=stale).delete()
+    for group_id, person_id in missing:
+        AccessGroupMember.objects.create(
+            access_group_id=group_id, person_id=person_id, source=AccessGroupMember.Source.POSITIONS
+        )
+    return {"added": len(missing), "removed": len(stale)}
+
+
+@transaction.atomic
+def set_group_positions(group: AccessGroup, positions: list[str], *, actor: Actor, request=None) -> dict:
+    """The job positions that put a person in `group`: the whole list, replacing the one before.
+
+    Everyone who holds one of them joins the group at once, and so can enter every site the group
+    opens on each gateway's next pull. That is why it is an Admin's change, like the group's sites.
+    """
+    actor.require_member(Role.ADMIN)
+    wanted: dict[str, str] = {}
+    for raw in positions:
+        name = plain_text(raw, 60)
+        if name:
+            wanted.setdefault(name.casefold(), name)
+    if len(wanted) > MAX_POSITIONS_PER_GROUP:
+        raise ValidationError(f"A group can name at most {MAX_POSITIONS_PER_GROUP} positions.")
+    current = {link.position_key: link for link in AccessGroupPosition.objects.filter(access_group=group)}
+    added = sorted(wanted[key] for key in wanted.keys() - current.keys())
+    removed = sorted(current[key].position for key in current.keys() - wanted.keys())
+    for key in wanted.keys() - current.keys():
+        AccessGroupPosition.objects.create(access_group=group, position=wanted[key], position_key=key)
+    AccessGroupPosition.objects.filter(access_group=group, position_key__in=current.keys() - wanted.keys()).delete()
+    changed = sync_position_memberships()
+    if added or removed:
         _audit(
             actor,
-            "access.removed",
+            "access.group_positions_changed",
             request=request,
-            target=person,
-            target_label=person.name,
-            data={"group": group.name},
+            target=group,
+            target_label=group.name,
+            data={
+                "added": added,
+                "removed": removed,
+                "people_added": changed["added"],
+                "people_removed": changed["removed"],
+            },  # fmt: skip
         )
+    return changed
 
 
 @transaction.atomic

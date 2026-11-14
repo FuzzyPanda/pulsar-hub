@@ -186,15 +186,40 @@ def _site_values(row: dict) -> dict:
     }
 
 
+MAX_POSITIONS_PER_PERSON = 20
+
+
+def _positions(value) -> list[str]:
+    """A person's job positions as sent: plain names of at most 60 characters, sorted, with blanks
+    and repeats (whatever their case) dropped."""
+    problem = ValidationError(f"A person's positions must be a list of at most {MAX_POSITIONS_PER_PERSON} names.")
+    if not isinstance(value, list) or len(value) > MAX_POSITIONS_PER_PERSON:
+        raise problem
+    names: dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, str):
+            raise problem
+        name = plain_text(item, 60)
+        if name:
+            names.setdefault(name.casefold(), name)
+    return sorted(names.values())
+
+
 def _person_values(row: dict) -> dict:
     status = row.get("status", "active")
     if status not in Person.Status.values:
         raise ValidationError("A person's status must be active or ended.")
-    return {
+    values = {
         "name": _clean_name(_text(row.get("name"), "A person's name"), "A person"),
         "work_email": _text(row.get("work_email"), "A person's work_email").strip().lower()[:254],
         "status": status,
     }
+    # Only when the sender says something about positions. A row without the key (a sender that
+    # does not send positions, or has stopped) leaves the positions the hub holds as they were:
+    # silence is not "this person has no position", which would take their access away.
+    if "positions" in row:
+        values["positions"] = _positions(row["positions"])
+    return values
 
 
 class _Rows:
@@ -384,6 +409,17 @@ def apply_rostering_snapshot(*, people: list[dict], sites: list[dict], allow_emp
             counts["people_ended"] += 1
 
     if any(counts.values()):
+        # A person's positions may have changed, and a group that names a position takes in
+        # whoever holds it. Worked out here, in the same transaction, so that who may enter never
+        # lags the people it is worked out from.
+        from hub.access.services import sync_position_memberships
+
+        access = sync_position_memberships()
+        data = dict(counts)
+        if rejected:
+            data["rows_rejected"] = len(rejected)
+        if any(access.values()):
+            data |= {"access_granted_by_position": access["added"], "access_removed_by_position": access["removed"]}
         # One event per snapshot that changed something, not one per row: an unchanged snapshot
         # arrives every minute and must leave no trace. Rows it refused are counted on that event;
         # a snapshot that changed nothing is not recorded for its refusals alone, because a sender
@@ -394,6 +430,6 @@ def apply_rostering_snapshot(*, people: list[dict], sites: list[dict], allow_emp
             actor_kind=AuditEvent.ActorKind.SERVICE,
             target=token,
             target_label=getattr(token, "name", "") or "",
-            data={**counts, "rows_rejected": len(rejected)} if rejected else counts,
+            data=data,
         )
     return {**counts, "rejected_count": len(rejected), "rejected": rejected[:MAX_REJECTED_LISTED]}

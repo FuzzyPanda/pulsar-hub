@@ -243,6 +243,45 @@ def test_a_snapshot_cannot_claim_or_touch_bs_people_or_sites(client, world_a, wo
     assert Site.all_organisations.get(pk=world_b.site.pk).is_active
 
 
+def test_positions_sent_for_a_never_put_anyone_in_bs_groups(client, world_a, world_b):
+    """Both organisations name the same position on a group. A's snapshot gives A's person that
+    position: A's group takes them in; B's memberships, and what B's gateway is sent, do not move."""
+    from hub.access.models import AccessGroupMember, AccessGroupPosition
+    from tests import factories as f
+
+    use_rostering(world_a)
+    for world in (world_a, world_b):
+        with organisation_context(world.organisation):
+            group = f.AccessGroupFactory(organisation=world.organisation, name=f"{world.marker} Guards")
+            f.AccessGroupSiteFactory(organisation=world.organisation, access_group=group, site=world.site)
+            AccessGroupPosition.objects.create(access_group=group, position="Guard", position_key="guard")
+    before_b = snapshot(world_b.organisation)
+    version_b = client.get(
+        reverse("api_gateway_access", kwargs={"site_ref": world_b.site.pk}), **gateway_headers(world_b)
+    ).json()["version"]
+    body = json.loads(directory_body(world_a))
+    body["people"][0]["positions"] = ["Guard"]
+    body["sites"] = [
+        {"site_ref": str(site.pk), "name": site.name, "address": site.address, "timezone": site.timezone}
+        for site in Site.all_organisations.filter(organisation=world_a.organisation)
+    ]
+    response = client.put(
+        reverse("api_directory"),
+        data=json.dumps(body).encode(),
+        content_type="application/json",
+        **service_headers(world_a),
+    )
+    assert response.status_code == 200 and world_b.marker not in response.content.decode()
+    derived = AccessGroupMember.all_organisations.filter(source="positions")
+    assert [m.organisation_id for m in derived] == [world_a.organisation.pk]
+    assert snapshot(world_b.organisation) == before_b
+    after_b = client.get(
+        reverse("api_gateway_access", kwargs={"site_ref": world_b.site.pk}), **gateway_headers(world_b)
+    ).json()
+    assert after_b["version"] == version_b and world_a.marker not in json.dumps(after_b)
+    assert current_organisation() is None
+
+
 def test_sites_show_a_only_as_gateways(client, world_a, world_b):
     """The gateway block on `GET /sites` is worked out per organisation: B's gateway, its contact
     time and its confirmation never colour A's answer."""
@@ -283,7 +322,8 @@ def test_service_tokens_need_the_scope_and_die_when_revoked(client, world_a, nam
     with organisation_context(world_a.organisation):
         others = [s for s in ("directory:read", "directory:write", "events:read") if s != API_ROUTES[name].scope]
         ServiceToken.objects.update(scopes=others)
-    assert call().status_code == 403
+    # A call that needs no scope (what the hub accepts) answers any live token.
+    assert call().status_code == (403 if API_ROUTES[name].scope else 200)
     with organisation_context(world_a.organisation):
         ServiceToken.objects.update(scopes=[API_ROUTES[name].scope], revoked_at=timezone.now())
     assert call().status_code == 401

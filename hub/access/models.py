@@ -33,9 +33,19 @@ class AccessGroup(OrganisationScopedModel):
 
 
 class AccessGroupMember(OrganisationScopedModel):
+    """One person in one group. `source` says who put them there: a person in the console
+    (`manual`), or one of the group's positions that the person holds (`positions`). A membership
+    is one or the other, never both: a hand-made one is never touched by the positions, and one
+    that came from a position goes when the position does."""
+
+    class Source(models.TextChoices):
+        MANUAL = "manual", "Added by a person"
+        POSITIONS = "positions", "From a job position"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     access_group = models.ForeignKey(AccessGroup, on_delete=models.CASCADE, related_name="memberships")
     person = models.ForeignKey("directory.Person", on_delete=models.CASCADE, related_name="access_memberships")
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -45,6 +55,30 @@ class AccessGroupMember(OrganisationScopedModel):
 
     def __str__(self) -> str:
         return f"{self.person_id} in {self.access_group_id}"
+
+
+class AccessGroupPosition(OrganisationScopedModel):
+    """A job position that puts whoever holds it in the group: "Guard" gives "Guards".
+
+    Positions are names sent by Pulsar Rostering on each person (docs/CONTRACTS.md). The match
+    ignores case (`position_key`), because the name is typed here by one person and in Rostering
+    by another.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    access_group = models.ForeignKey(AccessGroup, on_delete=models.CASCADE, related_name="position_links")
+    position = models.CharField(max_length=60)
+    position_key = models.CharField(max_length=120, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(fields=["access_group", "position_key"], name="access_groupposition_unique"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.position} gives {self.access_group_id}"
 
 
 class AccessGroupSite(OrganisationScopedModel):

@@ -14,7 +14,7 @@ from hub.access.services import desired_access
 from hub.api.authentication import GatewayAuthentication, OrganisationTokenAuthentication, ServiceTokenAuthentication
 from hub.api.exceptions import refusal
 from hub.api.models import Scope
-from hub.api.permissions import HasScope, IsGateway
+from hub.api.permissions import HasScope, IsGateway, IsServiceToken
 from hub.api.serializers_machine import EventSerializer, PersonSerializer, SiteSerializer
 from hub.directory import services as directory
 from hub.directory.models import Person, Site
@@ -147,6 +147,30 @@ class ServiceView(APIView):
     permission_classes = [HasScope]
 
 
+# The only keys a directory snapshot may carry (rule 11). `CapabilitiesView` advertises these same
+# lists, so what the hub says it accepts and what it accepts cannot drift apart.
+DIRECTORY_PERSON_FIELDS = ["person_ref", "name", "work_email", "status", "positions"]
+DIRECTORY_SITE_FIELDS = ["site_ref", "name", "address", "timezone", "is_active"]
+CONTRACT_VERSION = 2
+
+
+class CapabilitiesView(APIView):
+    """`GET /api/v1/capabilities`: what this hub accepts beyond the first contract, so that a
+    sender only sends what will be taken (docs/CONTRACTS.md). Any live service token may ask; it
+    says nothing about the organisation."""
+
+    authentication_classes = [ServiceTokenAuthentication]
+    permission_classes = [IsServiceToken]
+
+    def get(self, request):
+        return Response(
+            {
+                "contract": CONTRACT_VERSION,
+                "directory": {"person_fields": DIRECTORY_PERSON_FIELDS, "site_fields": DIRECTORY_SITE_FIELDS},
+            }
+        )
+
+
 class DirectoryView(ServiceView):
     """`PUT /api/v1/directory`: the full list of people and sites from Pulsar Rostering."""
 
@@ -161,14 +185,13 @@ class DirectoryView(ServiceView):
                 raise ValidationError("people and sites must both be lists.")
             if not all(isinstance(row, dict) for row in [*people, *sites]):
                 raise ValidationError("Every person and site must be an object.")
-            allowed_person = {"person_ref", "name", "work_email", "status"}
-            allowed_site = {"site_ref", "name", "address", "timezone", "is_active"}
+            allowed_person, allowed_site = set(DIRECTORY_PERSON_FIELDS), set(DIRECTORY_SITE_FIELDS)
             if any(set(row) - allowed_person for row in people) or any(set(row) - allowed_site for row in sites):
                 # Refused whole, not ignored and not judged row by row: a sender that has started
                 # including more than these fields must find out now, before it sends something
                 # that should never leave it (rule 11).
                 raise ValidationError(
-                    "A person may carry only person_ref, name, work_email and status; "
+                    "A person may carry only person_ref, name, work_email, status and positions; "
                     "a site only site_ref, name, address, timezone and is_active.",
                     code="unexpected_field",
                 )

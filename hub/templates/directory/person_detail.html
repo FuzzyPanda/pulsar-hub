@@ -6,6 +6,7 @@
     <a class="btn btn-link" href="{% url 'person_list' org_slug=organisation.slug %}">All people</a>
   </div>
   <p class="muted">{% if person.work_email %}{{ person.work_email }}{% else %}No work email.{% endif %}{% if person.ended_at %} Ended {{ person.ended_at|date:"j M Y, H:i" }} UTC.{% endif %}</p>
+  {% if person.positions %}<p>Job positions: {{ person.positions|join:", " }}</p>{% endif %}
 
   <section class="card" aria-labelledby="where-heading">
     <h2 id="where-heading">Where this person can enter</h2>
@@ -39,17 +40,21 @@
     <h2 id="groups-heading">Access groups</h2>
     {% if groups %}
       <ul class="list">
-        {% for group in groups %}
+        {% for membership in memberships %}{% with group=membership.access_group %}
           <li>
             <a href="{% url 'group_detail' org_slug=organisation.slug group_id=group.id %}">{{ group.name }}</a>
+            {% if membership.source == "positions" %}
+              <span class="badge">Through a position</span>
+            {% else %}
             <form method="post" action="{% url 'group_member_remove' org_slug=organisation.slug group_id=group.id %}">
               {% csrf_token %}
               <input type="hidden" name="person" value="{{ person.id }}">
               <input type="hidden" name="return" value="person">
               <button class="btn btn-secondary btn-sm" type="submit">Remove from {{ group.name }}</button>
             </form>
+            {% endif %}
           </li>
-        {% endfor %}
+        {% endwith %}{% endfor %}
       </ul>
     {% else %}
       <p class="empty">This person is not in any access group.</p>

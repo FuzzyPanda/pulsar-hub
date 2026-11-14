@@ -74,6 +74,8 @@ def make_world(letter: str) -> World:
     world.access_group = f.AccessGroupFactory(organisation=organisation, name=f"{marker} Nurses")
     f.AccessGroupMemberFactory(organisation=organisation, access_group=world.access_group, person=world.person)
     f.AccessGroupSiteFactory(organisation=organisation, access_group=world.access_group, site=world.site)
+    # A position the group names. Nobody holds it, so the world's one membership stays hand-made.
+    f.AccessGroupPositionFactory(organisation=organisation, access_group=world.access_group, position=f"{marker} Ward")
     world.gateway_credential = f"hubgw_{marker.lower()}_credential"
     world.gateway = f.GatewayFactory(
         organisation=organisation,
