@@ -31,7 +31,8 @@ class Product:
     icon: str = "app"
     kind: str = ADDRESS
     # Appended to the connection's base address to make the "Open" link. `{org_slug}` is replaced
-    # with the organisation's slug. An Owner can override it per connection.
+    # with the organisation's slug and `{org_ref}` with its id. An Owner can override it per
+    # connection.
     launch_path: str = "/"
     # The least role that sees the tile and may open the product.
     minimum_role: Role = Role.STAFF
@@ -73,8 +74,10 @@ CATALOGUE: tuple[Product, ...] = (
         summary="Rosters, shifts and attendance.",
         icon="calendar",
         # Rostering's "sign in with Pulsar Hub": it sends the browser back through the hub's OIDC
-        # screens and lands the person in this organisation, already signed in.
-        launch_path="/api/v1/auth/hub/start?org={org_slug}",
+        # screens and lands the person in this organisation, already signed in. The organisation
+        # is named by its id, which Rostering hands straight back to the hub's authorisation
+        # screen: the two products' slugs need not match.
+        launch_path="/api/v1/auth/hub/start?hub_org={org_ref}",
         address_hint="Where this organisation opens Pulsar Rostering, such as https://rostering.example.com.",
     ),
     Product(

@@ -111,6 +111,8 @@ def test_full_flow_issues_tokens_bound_to_the_organisation(client, app, world_a)
         "iss", "sub", "aud", "exp", "iat", "auth_time", "jti", "nonce", "at_hash",
         "org_ref", "org_role", "org_name", "name", "email", "email_verified",
     }  # fmt: skip
+    # Staff signed in with a password only: the token does not claim a second factor.
+    assert "amr" not in claims
 
     access = AccessToken.objects.get()
     refresh = RefreshToken.objects.get()
@@ -208,7 +210,33 @@ def test_role_that_needs_mfa_cannot_get_a_token_without_it(client, app, world_a)
     assert not Grant.objects.exists()
 
     tokens = sign_in_and_get_tokens(client, app, world_a.manager, mfa=True)
-    assert id_claims(client, app, tokens)["org_role"] == "manager"
+    claims = id_claims(client, app, tokens)
+    assert claims["org_role"] == "manager"
+    assert claims["amr"] == ["mfa"]  # and the token says the session passed it
+
+
+def test_the_id_token_says_when_the_session_passed_a_second_factor(client, app, world_a):
+    """`amr: ["mfa"]` is about the session, not the role: Staff who used a second factor get it,
+    and nobody gets it without one. A client reads absence as "not proved"."""
+    without = sign_in_and_get_tokens(client, app, world_a.staff)
+    assert "amr" not in id_claims(client, app, without)
+
+    client.logout()
+    tokens = sign_in_and_get_tokens(client, app, world_a.staff, mfa=True, scope="openid")
+    claims = id_claims(client, app, tokens)
+    assert claims["org_role"] == "staff" and claims["amr"] == ["mfa"]  # needs only the openid scope
+    assert Grant.objects.count() == 0 and RefreshToken.objects.filter(mfa_passed=True).count() == 1
+
+    # A refresh carries what the original sign-in proved.
+    refreshed = client.post(
+        "/oauth/token/",
+        {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": app.client_id},
+    )
+    assert refreshed.status_code == 200, refreshed.content
+    assert id_claims(client, app, refreshed.json())["amr"] == ["mfa"]
+
+    # Userinfo holds only an access token and makes no statement about the session.
+    assert "amr" not in client.get("/oauth/userinfo/", **bearer(refreshed.json())).json()
 
 
 def test_refresh_keeps_the_organisation_and_rotates(client, app, world_a):

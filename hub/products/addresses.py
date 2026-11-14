@@ -18,6 +18,10 @@ from django.http.request import split_domain_port
 
 HOST_PLACEHOLDER = "{host}"
 ORG_SLUG_PLACEHOLDER = "{org_slug}"
+# The organisation's id (`org_ref` in docs/CONTRACTS.md). Unlike the slug it means the same thing
+# in every product, so a product can be told which organisation without the two slugs matching.
+ORG_REF_PLACEHOLDER = "{org_ref}"
+LAUNCH_PLACEHOLDERS = (ORG_SLUG_PLACEHOLDER, ORG_REF_PLACEHOLDER)
 MAX_ADDRESS_LENGTH = 300
 # Stands in for `{host}` while the rest of the address is parsed. `.invalid` never resolves.
 _STAND_IN = "host-placeholder.invalid"
@@ -95,9 +99,13 @@ def clean_launch_path(value: str) -> str:
         raise ValidationError("The launch path must start with a single /, such as /login.")
     if "#" in value:
         raise ValidationError("The launch path must not contain a #.")
-    probe = value.replace(ORG_SLUG_PLACEHOLDER, "")
+    probe = value
+    for placeholder in LAUNCH_PLACEHOLDERS:
+        probe = probe.replace(placeholder, "")
     if "{" in probe or "}" in probe:
-        raise ValidationError(f"The launch path can contain {ORG_SLUG_PLACEHOLDER} and no other placeholder.")
+        raise ValidationError(
+            f"The launch path can contain {ORG_SLUG_PLACEHOLDER} and {ORG_REF_PLACEHOLDER} and no other placeholder."
+        )
     return value
 
 
@@ -126,8 +134,12 @@ def resolve_address(address: str, *, host: str) -> str:
     return address
 
 
-def launch_url(base_address: str, launch_path: str, *, host: str, org_slug: str) -> str:
-    """The "Open" link for a product: the resolved base address and the launch path."""
+def launch_url(base_address: str, launch_path: str, *, host: str, org_slug: str, org_ref: str = "") -> str:
+    """The "Open" link for a product: the resolved base address and the launch path.
+
+    `{org_slug}` and `{org_ref}` in the path become the organisation's slug and id. Empty when the
+    path asks for the id and none was given: a link that names no organisation is not offered.
+    """
     base = resolve_address(base_address, host=host)
     if not base:
         return ""
@@ -135,5 +147,8 @@ def launch_url(base_address: str, launch_path: str, *, host: str, org_slug: str)
         path = clean_launch_path(launch_path)
     except ValidationError:
         return ""
+    if ORG_REF_PLACEHOLDER in path and not org_ref:
+        return ""
     path = path.replace(ORG_SLUG_PLACEHOLDER, quote(org_slug, safe=""))
+    path = path.replace(ORG_REF_PLACEHOLDER, quote(str(org_ref), safe=""))
     return base.rstrip("/") + (path or "/")

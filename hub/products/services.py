@@ -193,7 +193,11 @@ def launcher_tiles(*, actor: Actor, request) -> list[Tile]:
                 tile.action_url = reverse("site_list", kwargs={"org_slug": organisation.slug})
         else:
             url = launch_url(
-                app.base_address, app.launch_path or product.launch_path, host=host, org_slug=organisation.slug
+                app.base_address,
+                app.launch_path or product.launch_path,
+                host=host,
+                org_slug=organisation.slug,
+                org_ref=str(organisation.pk),
             )
             if url:
                 tile.links = [Link("Open", url)]
@@ -221,7 +225,11 @@ def settings_rows(*, request) -> tuple[list[dict], list[ConnectedApp]]:
         preview = ""
         if app is not None and product.kind == catalogue.ADDRESS:
             preview = launch_url(
-                app.base_address, app.launch_path or product.launch_path, host=host, org_slug=organisation.slug
+                app.base_address,
+                app.launch_path or product.launch_path,
+                host=host,
+                org_slug=organisation.slug,
+                org_ref=str(organisation.pk),
             )
         rows.append(
             {
