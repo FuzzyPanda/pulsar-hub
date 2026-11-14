@@ -69,6 +69,16 @@ protection (not yet set up).
 - [x] Token claims carry the user, the organisation and the role, nothing sensitive.
 - [x] Audit log: sign-in, MFA changes, role changes, operator access.
 
+**The hub as the front door (added 2026-11-14)**
+
+- [x] Apps launcher on the organisation overview: a code-defined product catalogue and
+  per-organisation connected apps, managed by an Owner in Settings. `docs/PRODUCTS.md`.
+- [x] Each gateway can carry a console address, set by an Admin on the site page; the site page
+  and the Access Control tile link to it. A link only: the hub still never calls a gateway.
+- [ ] Pulsar Rostering's side of the link (`/api/v1/auth/hub/start`, "sign in with Pulsar Hub")
+  is being built in `pulsar-rostering`. Until it is live there, an Owner can point the tile at
+  Rostering's front page with a launch path of `/`. See decision D8, which this does not close.
+
 ## H2 — Directory
 
 - [x] `Person` (`person_ref`, name, work email, status, optional link to a login).

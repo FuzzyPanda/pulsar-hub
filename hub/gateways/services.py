@@ -32,6 +32,7 @@ from hub.gateways.models import (
 from hub.organisations.context import organisation_context, require_organisation
 from hub.organisations.models import Role, hash_token
 from hub.organisations.services import Actor, _audit
+from hub.products.addresses import clean_base_address
 
 # --- pairing --------------------------------------------------------------------------------------
 
@@ -141,6 +142,34 @@ def revoke_gateway(gateway: Gateway, *, actor: Actor, request=None) -> None:
         gateway.revoked_at, gateway.revoked_by = timezone.now(), actor.user
         gateway.save(update_fields=["revoked_at", "revoked_by"])
         _audit(actor, "gateway.revoked", request=request, target=gateway, target_label=gateway.site.name)
+
+
+@transaction.atomic
+def set_console_address(gateway: Gateway, *, actor: Actor, address: str, request=None) -> None:
+    """Record where this gateway's own web console is opened, or clear it with a blank address.
+
+    The address becomes a link on the site's page and in the Apps launcher. That is all it is:
+    the hub never calls it (rule 3) and holds no sign-in for it. `{host}` is refused here, because
+    a gateway does not live at the hub's address.
+    """
+    actor.require_member(Role.ADMIN)
+    if not gateway.is_live:
+        raise ValidationError("This gateway has been revoked.")
+    address = (address or "").strip()
+    if address:
+        address = clean_base_address(address, allow_host_placeholder=False, what="The console address")
+    if address != gateway.console_address:
+        old = gateway.console_address
+        gateway.console_address = address
+        gateway.save(update_fields=["console_address"])
+        _audit(
+            actor,
+            "gateway.console_address_changed",
+            request=request,
+            target=gateway,
+            target_label=gateway.site.name,
+            data={"from": old, "to": address},
+        )
 
 
 def touch(gateway: Gateway, *, software_version: str = "") -> None:

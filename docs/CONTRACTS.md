@@ -46,10 +46,13 @@ once and holds one token per organisation.
 | `sub` | `openid` | The login's id |
 | `org_ref` | `openid` | The organisation this token is for |
 | `org_role` | `openid` | `owner`, `admin`, `manager` or `staff` in that organisation, at issue time |
+| `amr` | `openid` | `["mfa"]` when the browser session that asked for the token had passed a second factor (authenticator app, passkey or recovery code; enrolling the first factor counts). Absent otherwise |
 | `name`, `org_name` | `profile` | Display names |
 | `email`, `email_verified` | `email` | The login's email address |
 
-Nothing else is ever a claim. A resource server must not treat `org_role` as live: the hub
+Nothing else is ever a claim. `amr` is in the ID token only (issued with the code and again at each
+refresh, which carries what the original sign-in proved); userinfo never has it. A client must read
+its absence as "not proved", never as "no second factor". A resource server must not treat `org_role` as live: the hub
 re-checks the membership on every API call, and a role change or removal deletes that user's
 tokens for the organisation, so a client learns of it within one access-token lifetime at most.
 
@@ -69,6 +72,25 @@ that row holds no secret. A directory never creates a membership: people still j
 invitation, and a first sign-in through a directory is accepted only while accepting an invitation
 from an organisation that lists that directory, for the invited address. A directory's email claim
 is never used to match an existing login.
+
+### Opening a product from the hub
+
+The hub's Apps launcher links to each product an organisation has connected (`docs/PRODUCTS.md`).
+The link is followed by the person's browser; the hub makes no call of its own.
+
+| Product | Link | What the product does with it |
+|---|---|---|
+| Pulsar Rostering | `{base}/api/v1/auth/hub/start?hub_org={org_ref}` | Starts its "sign in with Pulsar Hub": an authorisation-code request to this hub as OIDC provider (above) with `org={org_ref}`, and lands the person signed in. Rostering registers its own client with the hub |
+| Pulsar Access Control | The console address an Admin recorded for the site's gateway | The gateway's own web console, with the gateway's own sign-in. Reachable from the site's network only |
+
+`{base}` is the address an Owner entered for the organisation. `org_ref` is this hub's id for the
+organisation, the same value as the `org_ref` claim, so the link works whatever the organisation is
+called in the product (the two slugs need not match). It is sent so that the hub's authorisation
+screen is asked for the right organisation before anyone is signed in; it grants nothing, the hub
+refuses it for a person who does not belong to that organisation, and Rostering must take the
+organisation it trusts from the `org_ref` claim of the token it then receives. A launch path may use
+`{org_slug}` (the hub's slug) as well or instead. An Owner can replace the path for one organisation
+(for a product version that has no such endpoint yet) without a change here.
 
 ## Refusals (every `/api/v1/` call)
 

@@ -270,3 +270,39 @@ a.card h2 { color: var(--accent); }
 .grid + .grid, .grid + section.card { margin-top: 1.25rem; }
 .page-head h2 { margin: 0; }
 .pager + .card { margin-top: 1.25rem; }
+
+/* ==== Product launcher (Apps): overview tiles and Settings rows. Begin ==== */
+.apps { margin-bottom: 1.5rem; }
+.apps__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem 1rem; margin-bottom: 0.75rem; }
+.apps__head h2 { margin: 0; }
+.apps__grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+.apps__grid > .card + .card { margin-top: 0; }
+.app-tile { display: flex; flex-direction: column; }
+.app-tile--idle { background: var(--card-2); border-style: dashed; border-color: var(--line-strong); }
+.app-tile__head { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; }
+.app-tile__head h3, .card .app-tile__head h3 { margin: 0; font-size: 1.05rem; }
+.app-icon { flex: none; width: 2.5rem; height: 2.5rem; padding: 0.4rem; border-radius: var(--r); background: var(--accent-bg); color: var(--accent); }
+.app-tile--idle .app-icon { background: var(--card); color: var(--ink-dim); }
+.app-tile__actions { margin-top: auto; padding-top: 0.25rem; }
+.app-tile__links { list-style: none; margin: 0; padding: 0; }
+.app-tile__links > li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px solid var(--line); }
+.app-tile__links > li:first-child { border-top: 0; padding-top: 0; }
+.app-settings { list-style: none; margin: 0; padding: 0; }
+.app-setting { padding: 1rem 0; border-top: 1px solid var(--line); }
+.app-setting:last-child { padding-bottom: 0; }
+.app-setting__head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.app-setting__title { flex: 1; min-width: 12rem; }
+.app-setting__title h3, .card .app-setting__title h3 { margin: 0; }
+.app-setting__title p { margin: 0; }
+.app-setting__facts { margin: 0.75rem 0 0; display: grid; gap: 0.3rem; font-size: 0.92rem; }
+.app-setting__facts > div { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.75rem; }
+.app-setting__facts dt { color: var(--ink-dim); }
+.app-setting__facts dd { margin: 0; overflow-wrap: anywhere; }
+.app-setting__form { margin-top: 0.75rem; }
+.app-setting__form > form { margin-top: 0.9rem; }
+/* ==== Product launcher (Apps). End ==== */
+
+/* ==== Recovery codes page (templates/mfa/recovery_codes/index.html). Begin ==== */
+/* `.btn` sets `display`, which would otherwise show a control the page has marked hidden. */
+[hidden] { display: none !important; }
+/* ==== Recovery codes page. End ==== */

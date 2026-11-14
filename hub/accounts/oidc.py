@@ -3,7 +3,7 @@
 A token belongs to one user in one organisation. The organisation is chosen on the authorisation
 screen (`hub.accounts.oidc_views`), stored on the authorisation code, and copied to the access
 and refresh tokens here. Claims say who the user is, which organisation the token is for and the
-role held there, and nothing else (rule 11).
+role held there, whether the session passed a second factor, and nothing else (rule 11).
 """
 
 from datetime import timedelta
@@ -56,6 +56,7 @@ class HubOAuth2Validator(OAuth2Validator):
         "sub": "openid",
         "org_ref": "openid",
         "org_role": "openid",
+        "amr": "openid",
         "name": "profile",
         "org_name": "profile",
         "email": "email",
@@ -193,7 +194,7 @@ class HubOAuth2Validator(OAuth2Validator):
             # Never issue claims for an organisation the user has no live place in.
             raise ValueError("No active membership for this token's organisation.")
         user = request.user
-        return {
+        claims = {
             "org_ref": str(organisation.pk),
             "org_role": membership.role,
             "org_name": organisation.name,
@@ -201,3 +202,11 @@ class HubOAuth2Validator(OAuth2Validator):
             "email": user.email,
             "email_verified": True,
         }
+        # How the session that asked for this token signed in (RFC 8176), said only when it is
+        # known and true: the browser session had passed a second factor. `mfa_passed` is put on
+        # the request from the authorisation code or the refresh token (`validate_code`,
+        # `validate_refresh_token`), so an ID token carries it; a userinfo call, which has only an
+        # access token, does not. A client must read absence as "not proved", never as "no".
+        if getattr(request, "mfa_passed", False) is True:
+            claims["amr"] = ["mfa"]
+        return claims

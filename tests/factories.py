@@ -239,3 +239,16 @@ class ServiceTokenFactory(ScopedFactory):
     name = factory.Sequence(lambda n: f"Service {n}")
     token_hash = factory.Sequence(lambda n: hash_token(f"hubsvc_factory_{n}"))
     scopes = factory.LazyFunction(lambda: list(Scope.values))
+
+
+# --- connected products ---------------------------------------------------------------------------
+
+from hub.products.models import ConnectedApp  # noqa: E402
+
+
+class ConnectedAppFactory(ScopedFactory):
+    class Meta:
+        model = ConnectedApp
+
+    product_key = "rostering"
+    base_address = "https://rostering.example.test"

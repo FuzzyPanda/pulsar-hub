@@ -100,6 +100,21 @@ Its people and sites appear in the hub with Rostering's own references, so pair 
 A badge at a clock-in door is recorded in Rostering as a presence event for that person, marked as
 coming from the hub. It does not create a timesheet entry.
 
+## 5. Open the products from the hub
+
+The organisation's overview page starts with **Apps**. As an Owner, in **Settings → Apps**:
+
+- **Connect Pulsar Rostering** and enter where it runs. On a bench where Rostering is on the same
+  machine as the hub, on port 8080, enter `http://{host}:8080`: `{host}` becomes whichever name
+  you opened the hub with, so the link works by LAN address and by mesh VPN name alike.
+- **Connect Pulsar Access Control.** It has no address of its own. As an Admin, open the site's
+  page and, under **Gateway → Door controller console**, enter the gateway's own address (for
+  example `https://192.168.1.50/ui/`). The site page then has **Open door controller console**,
+  and the Access Control tile lists the site. The console opens from the site's network and asks
+  for the gateway's own sign-in.
+
+Both can also be done from a shell: `docker compose exec web python manage.py connect_app --help`.
+
 ## What to check, and what "working" looks like
 
 | Do this | Expect |
