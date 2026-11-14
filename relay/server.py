@@ -26,6 +26,7 @@ from aiohttp import web
 from relay import pages, protocol
 from relay.config import RelayConfig, gateway_label
 from relay.hubapi import HubApi, HubUnavailable
+from relay.outbox import Outbox
 from relay.protocol import CookieJar, ProtocolError
 from relay.tunnel import StreamReset, Tunnel, TunnelClosed, read_body
 
@@ -94,7 +95,9 @@ class Relay:
         self.tombstones: dict[str, tuple[float, str]] = {}  # cookie digest -> (when, return address)
         self.hub_seen_at = 0.0  # the last time the hub confirmed what the relay holds
         self.ready = False
-        self._events: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self.outbox = Outbox(
+            hub, self.instance, console_burst=config.console_report_burst, console_seconds=config.console_report_seconds
+        )
         self._tasks: list[asyncio.Task] = []
         self._tunnel_attempts = RateLimit(30, 60)
         self._handoff_attempts = RateLimit(20, 60)
@@ -102,7 +105,7 @@ class Relay:
     # --- lifecycle --------------------------------------------------------------------------------
 
     async def start(self) -> None:
-        self._tasks = [asyncio.create_task(self._announce_then_beat()), asyncio.create_task(self._send_events())]
+        self._tasks = [asyncio.create_task(self._announce_then_beat()), asyncio.create_task(self.outbox.run())]
 
     async def stop(self) -> None:
         self.ready = False
@@ -134,13 +137,26 @@ class Relay:
         now = time.time()
         for session in [s for s in self.sessions.values() if s.expires_at <= now]:
             await self.end_session(session, "expired", tell_hub=True)
-        gateways = [{"id": t.gateway_id, "console_enabled": t.console_enabled} for t in self.tunnels.values()]
+        gateways = [
+            {
+                "id": t.gateway_id,
+                "tunnel": t.id,
+                # What the hub has been told, not the instant's truth: the outbox paces changes.
+                "console_enabled": self.outbox.told_state(t.gateway_id, t.console_enabled),
+            }
+            for t in self.tunnels.values()
+        ]
         try:
             answer = await self.hub.heartbeat(self.instance, gateways, list(self.sessions))
         except HubUnavailable as exc:
             logger.warning("heartbeat failed: %s", exc)
+            if not self.hub_is_fresh:
+                # Nothing new is relayed while the hub cannot vouch for the sessions; what is
+                # already in flight stops too.
+                await self._abandon_everything("hub_unavailable")
             return
         self.hub_seen_at = time.monotonic()
+        self.outbox.forget(self.tunnels)
         for item in answer.get("end", []):
             session = self.sessions.get(str(item.get("id")))
             if session is not None:
@@ -157,22 +173,10 @@ class Relay:
         the relay cannot know that a session was ended or a person removed."""
         return self.ready and time.monotonic() - self.hub_seen_at < self.config.heartbeat_seconds * 3 + 5
 
-    def tell_hub(self, **event) -> None:
-        try:
-            self._events.put_nowait(event)
-        except asyncio.QueueFull:
-            logger.error("event queue full; the next heartbeat will reconcile")
-
-    async def _send_events(self) -> None:
-        while True:
-            event = await self._events.get()
-            for attempt in range(6):
-                try:
-                    await self.hub.event({"instance": self.instance, **event})
-                    break
-                except HubUnavailable as exc:
-                    logger.warning("event %s not delivered (%s)", event.get("event"), exc)
-                    await asyncio.sleep(min(2**attempt, 15))
+    async def _abandon_everything(self, reason: str) -> None:
+        for tunnel in list(self.tunnels.values()):
+            for stream in list(tunnel.streams.values()):
+                await tunnel.abandon(stream, reason)
 
     # --- sessions ---------------------------------------------------------------------------------
 
@@ -195,7 +199,7 @@ class Relay:
                 except TunnelClosed:
                     pass
         if tell_hub:
-            self.tell_hub(event="session.ended", session=session.id, reason=reason)
+            self.outbox.session_ended(session.id, reason)
         logger.info("session %s ended: %s", session.id, reason)
 
     async def close_gateway(self, gateway_id: str, reason: str) -> None:
@@ -312,9 +316,10 @@ class Relay:
         accepted = await self.hub.tunnel_opened(
             self.instance,
             tunnel.gateway_id,
+            tunnel_id=tunnel.id,
             protocol=tunnel.protocol_name,
             software_version=tunnel.software_version,
-            enabled=tunnel.console_enabled,
+            enabled=self.outbox.state_at_open(tunnel.gateway_id, tunnel.console_enabled),
         )
         if not accepted:
             raise TunnelClosed
@@ -339,10 +344,10 @@ class Relay:
         for session in [s for s in self.sessions.values() if s.gateway_id == tunnel.gateway_id]:
             await self.end_session(session, "tunnel_dropped", tell_hub=False, tell_gateway=False)
         if tell_hub:
-            self.tell_hub(event="tunnel.closed", gateway_id=tunnel.gateway_id, reason=reason)
+            self.outbox.tunnel_closed(tunnel.gateway_id, tunnel.id, reason)
 
     def _console_switched(self, tunnel: Tunnel) -> None:
-        self.tell_hub(event="console.switched", gateway_id=tunnel.gateway_id, enabled=tunnel.console_enabled)
+        self.outbox.console_switched(tunnel.gateway_id, tunnel.console_enabled)
         if not tunnel.console_enabled:
             for session in [s for s in self.sessions.values() if s.gateway_id == tunnel.gateway_id]:
                 asyncio.ensure_future(self.end_session(session, "gateway_ended", tell_hub=True))
@@ -438,11 +443,16 @@ class Relay:
         return "; ".join(parts)
 
     def _presented_cookies(self, request: web.Request) -> list[str]:
+        """The values of the console cookie on this request. Only the name that belongs to the
+        scheme counts: over HTTPS that is the `__Host-` one, which no other host can set or
+        shadow, and a plain `pulsar_console` beside it (tossed from a sibling origin with a Domain
+        attribute) is not a console cookie at all."""
+        wanted = SECURE_COOKIE_NAME if self._is_tls(request) else COOKIE_NAME
         values = []
         for header in request.headers.getall("Cookie", []):
             for item in header.split(";"):
                 name, sep, value = item.strip().partition("=")
-                if sep and name in (COOKIE_NAME, SECURE_COOKIE_NAME):
+                if sep and name == wanted:
                     values.append(value.strip())
         return values
 
@@ -490,17 +500,22 @@ class Relay:
         )
         if not self._handoff_attempts.allow(self._client_ip(request)):
             return pages.refused("Too many attempts", "Wait a minute and try again.", status=429)
-        if (request.content_length or 0) > 4096 or not self.hub_is_fresh:
+        # The hand-off comes from a form on the hub's own page, so the browser says where from.
+        # The web service checks that it is the hub origin this session was opened on; a request
+        # that does not say is not asked about at all.
+        hub_origin = protocol.origin_of(request.headers.get("Origin", ""))
+        length = request.content_length
+        if not hub_origin or length is None or not 0 < length <= 4096 or not self.hub_is_fresh:
             return gone
         try:
-            body = (await request.content.read(4097)).decode("ascii")
-        except (UnicodeDecodeError, aiohttp.ClientError):
+            body = (await asyncio.wait_for(request.content.readexactly(length), 5)).decode("ascii")
+        except (TimeoutError, UnicodeDecodeError, asyncio.IncompleteReadError, aiohttp.ClientError, ConnectionError):
             return gone
         token = (parse_qs(body).get("token") or [""])[0]
-        if not 40 <= len(token) <= 64 or not token.replace("-", "").replace("_", "").isalnum():
+        if not 40 <= len(token) <= 64 or not token.replace("-", "").replace("_", "").isalnum() or not token.isascii():
             return gone
         try:
-            answer = await self.hub.redeem_handoff(token, self._request_origin(request))
+            answer = await self.hub.redeem_handoff(token, self._request_origin(request), hub_origin)
         except HubUnavailable:
             return gone
         session = self.sessions.get(str((answer or {}).get("session"))) if answer else None
@@ -576,7 +591,7 @@ class Relay:
             return self._no_session(request)
 
         path = request.raw_path
-        if not path.startswith("/") or path.startswith("//") or any(ch <= " " or ch == "\x7f" for ch in path):
+        if not path.startswith("/") or path.startswith("//") or any(ch <= " " or ch in "\x7f\\" for ch in path):
             # Only ever a path on the console. The gateway checks this too; it is its decision in the end.
             return pages.refused("Not found", "There is nothing at this address.", status=404)
         headers = protocol.request_headers_for_gateway(
@@ -587,10 +602,18 @@ class Relay:
             session_id=session.id,
             content_length=length if has_body else (0 if method in ("POST", "PUT", "PATCH") else None),
         )
+        too_large = pages.refused("Too large", "The request's headers are too large.", status=431)
         try:
             protocol.check_header_size([(n, v) for n, v in headers])
         except ProtocolError:
-            return pages.refused("Too large", "The request's headers are too large.", status=431)
+            return too_large
+        # The limit that matters is the frame as it goes on the wire. Escaped as JSON, a header of
+        # non-ASCII text is several times its length in characters.
+        probe = protocol.text_frame(
+            "req", s=2**32 - 1, session=session.id, method=method, path=path, headers=headers, body=has_body
+        )
+        if len(probe) > protocol.MAX_TEXT_FRAME:
+            return too_large
 
         acquired = []
         try:
@@ -601,7 +624,24 @@ class Relay:
             for slots in acquired:
                 slots.release()
             return pages.refused("Busy", "The console is busy. Try again.", status=503, headers={"Retry-After": "2"})
-        stream = tunnel.open_stream(session.id)
+        # The wait for a slot can be long. Everything checked before it is checked again.
+        refusal = None
+        if session.ended or session.expires_at <= time.time() or tunnel.closed:
+            refusal = self._no_session(request)
+        elif self.tunnels.get(session.gateway_id) is not tunnel:
+            refusal = self._no_session(request)
+        elif not self.hub_is_fresh:
+            refusal = pages.refused(
+                "The hub cannot confirm this session",
+                "Try again in a moment.",
+                status=503,
+                headers={"Retry-After": "5"},
+            )
+        if refusal is not None:
+            for slots in acquired:
+                slots.release()
+            return refusal
+        stream = tunnel.open_stream(session.id, method)
         try:
             return await self._exchange(request, session, tunnel, stream, method, path, headers, has_body)
         except asyncio.CancelledError:
@@ -643,7 +683,9 @@ class Relay:
                         return pages.refused("Too large", "The upload is larger than it said.", status=413)
                     await tunnel.send_data(stream, chunk, timeout=config.idle_seconds)
                 await tunnel.send_frame("req.end", s=stream.id)
-            status, raw_headers, _ = await asyncio.wait_for(asyncio.shield(stream.head), config.response_seconds)
+            status, raw_headers, answers_with_body = await asyncio.wait_for(
+                asyncio.shield(stream.head), config.response_seconds
+            )
         except TimeoutError:
             await tunnel.abandon(stream, "timeout")
             return pages.refused("The gateway did not answer", "It took too long. Try again.", status=504)
@@ -669,26 +711,49 @@ class Relay:
         for value in set_cookies:
             session.jar.store(value, request_path=request.path)
 
-        response = web.StreamResponse(status=status)
-        for name, value in out_headers:
-            response.headers.add(name, value)
+        # A response with no body gets none, whatever arrives (the tunnel has already refused a
+        # gateway that claimed one). Nothing may follow it on the connection.
+        bodiless = protocol.response_is_bodiless(method, status)
         declared = [v.strip() for n, v in raw_headers if isinstance(n, str) and n.lower() == "content-length"]
-        if len(declared) == 1 and declared[0].isdigit():
-            response.content_length = int(declared[0])  # otherwise the body is sent chunked
-        await response.prepare(request)
+        length = int(declared[0]) if len(declared) == 1 and declared[0].isascii() and declared[0].isdigit() else None
         try:
-            while True:
-                chunk = await read_body(stream, timeout=config.idle_seconds)
-                if chunk is None:
-                    break
-                await response.write(chunk)  # waits while the browser is slow: that is the back-pressure
-                await tunnel.consumed(stream, len(chunk))
+            response = web.StreamResponse(status=status)
+            for name, value in out_headers:
+                response.headers.add(name, value)
+            if length is not None:
+                response.content_length = length  # otherwise the body is sent chunked
+            # How this response is framed came from the gateway. The connection it goes out on is
+            # never used again, so a gateway that lies about its length cannot leave bytes behind
+            # for whichever request the proxy in front would have sent down it next.
+            response.force_close()
+            await response.prepare(request)
+        except (ValueError, UnicodeError, TypeError):
+            await tunnel.abandon(stream, "protocol")
+            return pages.refused(
+                "The gateway's answer could not be used", "Its headers were not acceptable.", status=502
+            )
+        sent, complete = 0, False
+        try:
+            if answers_with_body and not bodiless:
+                while True:
+                    chunk = await read_body(stream, timeout=config.idle_seconds)
+                    if chunk is None:
+                        break
+                    if length is not None and sent + len(chunk) > length:
+                        raise StreamReset("more body than the declared length")
+                    await response.write(chunk)  # waits while the browser is slow: that is the back-pressure
+                    sent += len(chunk)
+                    await tunnel.consumed(stream, len(chunk))
             await response.write_eof()
+            complete = bodiless or length is None or sent == length
         except (StreamReset, TunnelClosed, ConnectionError):
-            # The status line has gone, so the only honest signal left is to cut the connection.
-            await tunnel.abandon(stream, "client_closed")
+            pass
+        if not complete:
+            # The status line has gone, so the only honest signal left is to cut the connection:
+            # at once, not after a tidy close that could pass for the end of a whole response.
+            await tunnel.abandon(stream, "aborted")
             if request.transport is not None:
-                request.transport.close()
+                request.transport.abort()
         return response
 
     # --- wiring -------------------------------------------------------------------------------------

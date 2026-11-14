@@ -31,6 +31,7 @@ import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 
 import aiohttp
 from aiohttp import web
@@ -56,6 +57,10 @@ Check by hand on the gateway (the hub cannot see these):
       are stripped from every request that reaches the console any other way
   [ ] the remote console is OFF until someone switches it on at the gateway, and the hub cannot
       switch it on
+  [ ] flick the switch on and off several times quickly while this tool is connected: the gateway
+      sends at most one `console` frame every 5 seconds, with the state it ended in (run this
+      tool again and read the "console frames" line)
+  [ ] a console page that answers 204 or 304, and any HEAD request, goes back with body false
   [ ] session start, end (with the reason) and each action taken in a session are in the gateway's
       own audit log with the hub user's id, email and role
   [ ] with the hub unreachable, or this tool stopped, doors behave exactly as before
@@ -67,7 +72,8 @@ def now_text(delta: float = 0.0) -> str:
 
 
 class Stream:
-    def __init__(self):
+    def __init__(self, method: str = "GET"):
+        self.method = method
         self.head: asyncio.Future = asyncio.get_running_loop().create_future()
         self.done = asyncio.Event()
         self.received = 0
@@ -94,6 +100,8 @@ class Connection:
         self.acks: dict[str, asyncio.Future] = {}
         self.pongs = asyncio.Queue()
         self.console_frames: list[dict] = []
+        self.console_times: list[float] = []
+        self.bodies_claimed: list[str] = []  # responses that may not have a body and said they had
         self.gateway_ended: list[dict] = []
         self.problems: list[str] = []
         self.closed = asyncio.Event()
@@ -137,6 +145,7 @@ class Connection:
             self.gateway_ended.append(frame)
         elif kind == "console":
             self.console_frames.append(frame)
+            self.console_times.append(time.monotonic())
         elif kind in ("res", "res.end", "rst", "win"):
             stream = self.streams.get(frame.get("s"))
             if stream is None:
@@ -148,6 +157,8 @@ class Connection:
                     stream.head.set_result(frame)
                     if frame.get("body") is not True:
                         stream.done.set()
+                    elif stream.method == "HEAD" or frame.get("status") in (204, 304):
+                        self.bodies_claimed.append(f"{stream.method} answered {frame.get('status')}")
             elif kind == "res.end":
                 stream.done.set()
             elif kind == "rst":
@@ -205,7 +216,7 @@ class Connection:
     async def request(self, session: str, method: str, path: str, *, body: bytes = b"", wait: float = 30):
         """Send one request. Returns (stream, head frame or None)."""
         self._next += 1
-        stream_id, stream = self._next, Stream()
+        stream_id, stream = self._next, Stream(method)
         self.streams[stream_id] = stream
         headers = [
             ["accept", "*/*"],
@@ -511,6 +522,7 @@ class Conformance:
             fail=f"answered {head and head.get('status')}",
         )
 
+        session_for_head, _ = await connection.start_session()
         if args.slow:
             session, ack = await connection.start_session(lifetime=2)
             await asyncio.sleep(65)
@@ -523,6 +535,25 @@ class Conformance:
         else:
             self.note("SKIP", "expiry enforced by the gateway's own clock", "run with --slow (takes 65 seconds)")
 
+        _, stream, head = await connection.request(session_for_head, "HEAD", args.path, wait=10)
+        self.check(
+            "a response to HEAD has body false",
+            head is not None and head.get("body") is not True,
+            f"status {head and head.get('status')}",
+            fail="no answer" if head is None else "body was true: the hub closes the tunnel (4000) on this",
+        )
+        self.check(
+            "no response to HEAD, or with status 204 or 304, claimed a body",
+            not connection.bodies_claimed,
+            fail="; ".join(connection.bodies_claimed[:3]) + ": the hub closes the tunnel (4000) on this",
+        )
+        gaps = [later - earlier for earlier, later in pairwise(connection.console_times)]
+        self.check(
+            "console frames are at least 5 seconds apart",
+            all(gap >= 5 for gap in gaps),
+            f"{len(connection.console_times)} seen during the run",
+            fail=f"two were {min(gaps, default=0):.1f} s apart: the hub closes the tunnel (4000) on this",
+        )
         self.check("no malformed frame was seen", not connection.problems, fail="; ".join(connection.problems[:3]))
 
         # Dropping the tunnel: the gateway comes back, not at once and not never.

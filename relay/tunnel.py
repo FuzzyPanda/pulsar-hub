@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import secrets
 import time
 
 import aiohttp
@@ -31,9 +32,10 @@ class Stream:
     """One browser request and its response. Bodies move under a credit window in each direction,
     so the relay never holds more than `protocol.WINDOW` bytes of either."""
 
-    def __init__(self, stream_id: int, session_id: str, loop: asyncio.AbstractEventLoop):
+    def __init__(self, stream_id: int, session_id: str, method: str, loop: asyncio.AbstractEventLoop):
         self.id = stream_id
         self.session_id = session_id
+        self.method = method
         self.head: asyncio.Future = loop.create_future()  # (status, headers, has_body)
         self.body: asyncio.Queue = asyncio.Queue()  # bytes, _END, or StreamReset
         self.send_credit = protocol.WINDOW
@@ -56,6 +58,7 @@ class Stream:
 class Tunnel:
     def __init__(self, ws: web.WebSocketResponse, gateway: dict, *, protocol_name: str, send_seconds: float = 30.0):
         self.ws = ws
+        self.id = secrets.token_hex(8)  # this connection, so a late report about an earlier one is not mistaken for it
         self.gateway_id: str = gateway["gateway_id"]
         self.gateway = gateway
         self.protocol_name = protocol_name
@@ -69,6 +72,7 @@ class Tunnel:
         self._send_lock = asyncio.Lock()
         self._send_seconds = send_seconds
         self._acks: dict[str, asyncio.Future] = {}
+        self._console_frame_at: float | None = None
         # Set by the relay: what to do when the gateway speaks about itself or a session.
         self.on_console_switched = lambda tunnel: None
         self.on_session_ended_by_gateway = lambda tunnel, session_id, reason: None
@@ -110,9 +114,9 @@ class Tunnel:
 
     # --- streams ----------------------------------------------------------------------------------
 
-    def open_stream(self, session_id: str) -> Stream:
+    def open_stream(self, session_id: str, method: str) -> Stream:
         self._next_stream += 1
-        stream = Stream(self._next_stream, session_id, asyncio.get_running_loop())
+        stream = Stream(self._next_stream, session_id, method, asyncio.get_running_loop())
         self.streams[stream.id] = stream
         return stream
 
@@ -215,6 +219,10 @@ class Tunnel:
             if not isinstance(headers, list):
                 raise ProtocolError('"headers" must be a list')
             has_body = frame.get("body") is True
+            if has_body and protocol.response_is_bodiless(stream.method, status):
+                # Not a matter of taste: bytes after a bodiless response would be read as the next
+                # response by whatever shares the connection. The whole tunnel goes.
+                raise ProtocolError(f"a response to {stream.method} with status {status} cannot have a body")
             stream.finished = not has_body
             stream.head.set_result((status, headers, has_body))
             if not has_body:
@@ -244,7 +252,13 @@ class Tunnel:
         elif kind == "session.end":
             self.on_session_ended_by_gateway(self, str(frame.get("session")), str(frame.get("reason") or "")[:64])
         elif kind == "console":
-            enabled = frame.get("enabled") is True
+            now = time.monotonic()
+            if self._console_frame_at is not None and now - self._console_frame_at < protocol.CONSOLE_FRAME_SECONDS:
+                raise ProtocolError(f"console frames less than {protocol.CONSOLE_FRAME_SECONDS} seconds apart")
+            self._console_frame_at = now
+            if not isinstance(frame.get("enabled"), bool):
+                raise ProtocolError('"enabled" must be true or false')
+            enabled = frame["enabled"]
             if enabled != self.console_enabled:
                 self.console_enabled = enabled
                 self.on_console_switched(self)

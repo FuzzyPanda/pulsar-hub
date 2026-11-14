@@ -264,6 +264,10 @@ class FakeGateway:
         self.ignore_window = False  # misbehave: send body without waiting for credit
         self.subprotocols = (SUBPROTOCOL,)
         self.extra_headers: dict[str, str] = {}  # for tests that stand in for the proxy in front of the hub
+        self.console_frame_seconds = 5.0  # the contract's least gap between two `console` frames
+        self._console_frame_at = 0.0
+        self._console_told = console_enabled  # what the hub was last told (in hello, or a console frame)
+        self._console_lock = asyncio.Lock()
         self.connected = asyncio.Event()
         self.closed = asyncio.Event()
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -309,7 +313,7 @@ class FakeGateway:
                 **self.extra_headers,
             },
             protocols=self.subprotocols,
-            max_msg_size=4 + MAX_DATA + 1024,
+            max_msg_size=128 * 1024 + 1024,  # the contract's largest JSON frame, and some
             heartbeat=None,
             autoping=True,
         )
@@ -319,6 +323,7 @@ class FakeGateway:
         await self._send_json(
             {"t": "hello", "software_version": self.software_version, "console_enabled": self.console_enabled}
         )
+        self._console_told, self._console_frame_at = self.console_enabled, 0.0
         self._task = asyncio.create_task(self._serve())
         # Welcomed, or closed before the welcome (the hub may refuse with a close code at any point).
         waiting = [asyncio.ensure_future(self.connected.wait()), asyncio.ensure_future(self.closed.wait())]
@@ -345,12 +350,24 @@ class FakeGateway:
             await self._runner.cleanup()
 
     async def set_console_enabled(self, enabled: bool) -> None:
-        """The local switch. Turning it off ends every session, here first."""
+        """The local switch. Turning it off ends every session, here first, and at once. The hub
+        is told with a `console` frame: only when the state it was last told has changed, and
+        never sooner than five seconds after the frame before (the hub closes the tunnel on a
+        gateway that sends them faster). Someone flicking the switch produces one frame, late,
+        with where it ended up."""
         self.console_enabled = enabled
         if not enabled:
             for session_id in list(self.sessions):
                 self._end(session_id, "disabled")
-        await self._send_json({"t": "console", "enabled": enabled})
+        async with self._console_lock:
+            wait = self.console_frame_seconds - (time.monotonic() - self._console_frame_at)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            if self.console_enabled == self._console_told or self._ws is None or self._ws.closed:
+                return  # back where the hub believes it is, or a later call already said so
+            self._console_told = self.console_enabled
+            self._console_frame_at = time.monotonic()
+            await self._send_json({"t": "console", "enabled": self._console_told})
 
     # --- frames -----------------------------------------------------------------------------------
 
@@ -507,6 +524,8 @@ class FakeGateway:
                 timeout=aiohttp.ClientTimeout(total=None, sock_read=120),
             ) as response:
                 headers = [[name, value] for name, value in response.headers.items()]
+                # Never a body for these, whatever the console sent: the hub closes the tunnel on
+                # a gateway that claims one.
                 has_body = frame["method"] != "HEAD" and response.status not in (204, 304)
                 await self._send_json(
                     {"t": "res", "s": stream_id, "status": response.status, "headers": headers, "body": has_body}

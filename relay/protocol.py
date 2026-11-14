@@ -28,6 +28,10 @@ PING_SECONDS = 20
 IDLE_SECONDS = 60  # a side that hears nothing for this long treats the tunnel as dead
 HELLO_SECONDS = 10
 SESSION_ACK_SECONDS = 5
+# A gateway says its switch changed only when it has, and never more often than this.
+CONSOLE_FRAME_SECONDS = 5
+# Responses that have no body, whatever a gateway says: an answer to HEAD, and these statuses.
+BODILESS_STATUSES = frozenset({204, 304})
 
 # --- close codes the hub uses ---------------------------------------------------------------------
 
@@ -86,6 +90,12 @@ def stream_id_of(frame: dict) -> int:
     if isinstance(stream_id, bool) or not isinstance(stream_id, int) or not 0 < stream_id < 2**32:
         raise ProtocolError('"s" must be a stream id')
     return stream_id
+
+
+def response_is_bodiless(method: str, status: int) -> bool:
+    """HTTP gives these responses no body. A byte written after one would be read, by whatever
+    reuses the connection, as the start of the next response."""
+    return method.upper() == "HEAD" or status in BODILESS_STATUSES
 
 
 def choose_subprotocol(offered: str) -> str | None:
@@ -175,6 +185,10 @@ def _clean_pairs(headers) -> list[tuple[str, str]]:
             raise ProtocolError("header names and values must be strings")
         if not _TOKEN.match(name) or any(ch in value for ch in "\r\n\0"):
             continue
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            continue  # a lone surrogate from undecodable bytes: it cannot be written back out
         pairs.append((name, value.strip()))
     return pairs
 
@@ -201,6 +215,10 @@ def request_headers_for_gateway(
         if lower in HOP_BY_HOP or lower in named or lower in _REQUEST_DROP:
             continue
         if lower.startswith(_REQUEST_DROP_PREFIXES):
+            continue
+        if "_" in lower:
+            # Servers that hand headers on as CGI variables read x_forwarded_for as X-Forwarded-For.
+            # No browser sends an underscore in a header name; nothing that does is passed on.
             continue
         out.append([lower, value])
     parts = urlsplit(origin)
@@ -260,16 +278,17 @@ def _confine_hx_location(value: str) -> str:
 
 
 def _confine_refresh(value: str) -> str:
-    """`Refresh: 5; url=/next` keeps its delay and has its address confined."""
+    """`Refresh: 5; url=/next` keeps its delay and has its address confined. Browsers accept the
+    address with or without `url=` and with or without quotes round it, so every form is read the
+    way a browser would read it, and what is written back is never quoted."""
     delay, _, rest = value.partition(";")
     delay = delay.strip()
-    if not delay.replace(".", "", 1).isdigit():
+    if not delay.replace(".", "", 1).isdigit() or not delay.isascii():
         delay = "0"
-    rest = rest.strip()
+    rest = re.sub(r"^\s*url\s*=", "", rest, count=1, flags=re.IGNORECASE)
+    rest = rest.strip("\"' \t")
     if not rest:
         return delay
-    if rest.lower().startswith("url="):
-        rest = rest[4:].strip().strip("\"'")
     return f"{delay}; url={confine_location(rest)}"
 
 

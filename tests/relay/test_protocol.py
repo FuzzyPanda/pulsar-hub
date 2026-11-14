@@ -363,6 +363,9 @@ def test_relay_settings_come_from_the_environment(monkeypatch):
     with pytest.raises(ConfigError):  # a shared plain-HTTP origin without the lab flag
         RelayConfig.from_env()
     monkeypatch.setenv("RELAY_ALLOW_PLAIN_HTTP", "True")
+    with pytest.raises(ConfigError):  # the lab flag on a hub that is itself https
+        RelayConfig.from_env()
+    monkeypatch.setenv("HUB_BASE_URL", "http://192.168.1.143")
     assert RelayConfig.from_env().shared_origin
     monkeypatch.setenv("CONSOLE_MAX_UPLOAD_MB", "500")
     with pytest.raises(ConfigError):

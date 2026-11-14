@@ -7,6 +7,7 @@ same relay against the real web service instead.
 
 import asyncio
 import functools
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +20,7 @@ from relay.server import Relay
 from tools.fake_gateway import FakeGateway
 
 SECRET = "test-only-relay-secret-0123456789abcdef"
+HUB_ORIGIN = "https://hub.test"  # where the hub's own pages are, as far as these tests go
 
 
 def async_test(test):
@@ -45,6 +47,8 @@ class StubHub:
         self.heartbeat_answer: dict = {"close": [], "end": []}
         self.down = False
         self.refuse_open = False
+        self.tunnel_ids: dict[str, str] = {}
+        self.event_delay = 0.0
 
     def _check(self):
         if self.down:
@@ -69,21 +73,25 @@ class StubHub:
         self._check()
         self.calls.append(("refused", gateway_id, offered))
 
-    async def tunnel_opened(self, instance, gateway_id, *, protocol, software_version, enabled):
+    async def tunnel_opened(self, instance, gateway_id, *, tunnel_id, protocol, software_version, enabled):
         self._check()
         self.calls.append(("opened", gateway_id, protocol, software_version, enabled))
+        self.tunnel_ids[gateway_id] = tunnel_id
         return not self.refuse_open
 
-    async def redeem_handoff(self, token, origin):
+    async def redeem_handoff(self, token, origin, hub_origin):
         self._check()
-        self.calls.append(("redeem", origin))
-        answer = self.handoffs.pop(token, None)  # single use
-        if answer is None or answer["origin"] != origin:
-            return None
+        self.calls.append(("redeem", origin, hub_origin))
+        answer = self.handoffs.get(token)
+        if answer is None or answer["origin"] != origin or hub_origin != HUB_ORIGIN:
+            return None  # as the web service does: refused, and the token not spent
+        del self.handoffs[token]  # single use
         return {"session": answer["session"], "cookie_secret": answer["cookie_secret"]}
 
     async def event(self, payload):
         self._check()
+        if self.event_delay:
+            await asyncio.sleep(self.event_delay)
         self.events.append(payload)
 
     async def heartbeat(self, instance, gateways, sessions):
@@ -100,6 +108,7 @@ class Bench:
         self._runners: list[web.AppRunner] = []
         self.ports: dict[str, int] = {}
         self.gateways: list[FakeGateway] = []
+        self.raw_gateways: list = []
         self.browsers: list = []
         self._http: aiohttp.ClientSession | None = None
 
@@ -136,7 +145,7 @@ class Bench:
     async def __aexit__(self, *exc) -> None:
         for browser in self.browsers:
             await browser.close()
-        for gateway in self.gateways:
+        for gateway in [*self.gateways, *self.raw_gateways]:
             await gateway.stop()
         await self._http.close()
         await self.relay.stop()
@@ -240,7 +249,7 @@ class Browser:
         await self.http.close()
 
     async def hand_off(self, token: str) -> aiohttp.ClientResponse:
-        response = await self.request("POST", "/__hub__/handoff", data={"token": token}, origin="https://hub.test")
+        response = await self.request("POST", "/__hub__/handoff", data={"token": token}, origin=HUB_ORIGIN)
         await response.read()
         return response
 
@@ -267,3 +276,73 @@ class Browser:
 
     async def post(self, path: str, **kwargs):
         return await self.request("POST", path, **kwargs)
+
+
+class RawGateway:
+    """A gateway that does exactly what a test tells it to, right or wrong: it says hello, accepts
+    every session, and hands each `req` frame to `behave(gateway, frame)`."""
+
+    def __init__(self, bench: Bench, name: str = "raw", *, behave=None, headers: dict | None = None):
+        self.bench = bench
+        self.gateway_id, self.credential = bench.hub.add_gateway(name)
+        self.behave = behave
+        self.headers = headers or {}
+        self.requests: list[dict] = []
+        self.frames: list[dict] = []
+        self.welcome: dict | None = None
+        self.ws: aiohttp.ClientWebSocketResponse | None = None
+        self._http = aiohttp.ClientSession()
+        self._task: asyncio.Task | None = None
+        self.closed = asyncio.Event()
+
+    async def connect(self, *, enabled: bool = True) -> "RawGateway":
+        self.ws = await self._http.ws_connect(
+            self.bench.tunnel_base + "/api/v1/gateways/tunnel",
+            headers={"Authorization": f"Bearer {self.credential}", **self.headers},
+            protocols=("pulsar-console.v1",),
+            max_msg_size=4 * 1024 * 1024,
+        )
+        await self.send("hello", console_enabled=enabled)
+        self.welcome = json.loads((await self.ws.receive(timeout=5)).data)
+        self._task = asyncio.create_task(self._serve())
+        self.bench.raw_gateways.append(self)
+        return self
+
+    async def send(self, frame_type: str, **fields) -> None:
+        await self.ws.send_str(json.dumps({"t": frame_type, **fields}))
+
+    async def data(self, stream_id: int, chunk: bytes) -> None:
+        await self.ws.send_bytes(stream_id.to_bytes(4, "big") + chunk)
+
+    async def _serve(self) -> None:
+        try:
+            async for message in self.ws:
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                frame = json.loads(message.data)
+                self.frames.append(frame)
+                if frame["t"] == "session.start":
+                    await self.send("session.ack", session=frame["session"], ok=True)
+                elif frame["t"] == "req":
+                    self.requests.append(frame)
+                    if self.behave is not None:
+                        asyncio.ensure_future(self._behave(frame))
+        finally:
+            self.closed.set()
+
+    async def _behave(self, frame: dict) -> None:
+        try:
+            await self.behave(self, frame)
+        except (ConnectionError, aiohttp.ClientError):
+            pass  # the relay closed the tunnel on it, which is often the point
+
+    @property
+    def close_code(self) -> int | None:
+        return self.ws.close_code
+
+    async def stop(self) -> None:
+        if self.ws is not None and not self.ws.closed:
+            await self.ws.close()
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
+        await self._http.close()
