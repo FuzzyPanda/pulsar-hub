@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Opening the remote console{% endblock %}
+{% block extra_head %}<script src="{% static 'hub/js/console_handoff.js' %}" defer></script>{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Opening the remote console</h1>
+  </div>
+  <section class="card">
+    <p>The door controller console at <strong>{{ site.name }}</strong> opens on its own address, away from the hub.</p>
+    <p class="muted">This session is for you alone and ends at {{ session.expires_at|date:"H:i" }} UTC. It is recorded in the audit log here and on the gateway.</p>
+    {# The one-time token travels in the body of a POST, never in an address. #}
+    <form id="console-handoff" method="post" action="{{ action }}" rel="noopener">
+      <input type="hidden" name="token" value="{{ token }}">
+      <div class="actions"><button class="btn" type="submit">Continue to the console</button></div>
+    </form>
+  </section>
+{% endblock %}

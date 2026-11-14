@@ -1,7 +1,8 @@
 """Pulsar Access Control gateways: pairing, what each has applied, and what each reports.
 
 A gateway always dials out (rule 3). The hub holds nothing that lets it reach a site, and it
-never receives a card number, a PIN or a credential hash (rule 2).
+never receives a card number, a PIN or a credential hash (rule 2). The remote console
+(`hub.console`) runs down a connection the gateway itself opened.
 """
 
 import secrets
@@ -70,10 +71,18 @@ class Gateway(OrganisationScopedModel):
     paired_by_code = models.ForeignKey(PairingCode, null=True, on_delete=models.SET_NULL, related_name="+")
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    # Where a person on the site's network opens this gateway's own web console, set by an Admin.
-    # It is only ever written into a page as a link for that person's browser: the hub never
-    # connects to it (rule 3), and the gateway keeps its own sign-in.
-    console_address = models.CharField(max_length=300, blank=True)
+
+    # The remote-console tunnel: a connection the gateway opened to the hub's relay and keeps open
+    # (rule 3 as amended: the gateway dials, the hub answers down that connection). These are what
+    # the relay last reported, written by `hub.console.services`; none of it is a setting.
+    tunnel_connected = models.BooleanField(default=False)
+    tunnel_changed_at = models.DateTimeField(null=True, blank=True)
+    tunnel_seen_at = models.DateTimeField(null=True, blank=True)
+    # The protocol version last agreed. Blank until this gateway has opened a tunnel at all.
+    tunnel_protocol = models.CharField(max_length=32, blank=True)
+    # Whether the gateway says its remote console is switched on. Set on the gateway, by someone
+    # on site, and off unless they did: the hub can read it and cannot change it.
+    console_enabled = models.BooleanField(default=False)
 
     # What the gateway last told us.
     last_seen_at = models.DateTimeField(null=True, blank=True)

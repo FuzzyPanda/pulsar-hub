@@ -10,8 +10,9 @@ A product is one of two kinds:
 * `ADDRESS`: the product runs at one address per organisation (Pulsar Rostering). The connection
   holds the base address and the launcher shows one "Open" link.
 * `SITES`: the product runs at each site (Pulsar Access Control: every gateway has its own
-  console). The connection holds no address; the launcher lists the sites whose gateway has a
-  console address, set on the site's page.
+  console). The connection holds no address; the launcher lists each site with a paired gateway
+  and says where its remote console stands. The console is opened through the hub
+  (`hub.console`), never by a link to the gateway's own address.
 """
 
 from dataclasses import dataclass

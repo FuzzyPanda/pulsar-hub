@@ -84,22 +84,6 @@ def gateway_revoke(request, org_slug: str, gateway_id):
     return redirect("site_detail", org_slug=org_slug, site_id=gateway.site_id)
 
 
-@require_POST
-@role_required(Role.ADMIN)
-@step_up_required
-def gateway_console_address(request, org_slug: str, gateway_id):
-    gateway = get_object_or_404(Gateway.objects.select_related("site"), pk=gateway_id)
-    try:
-        services.set_console_address(
-            gateway, actor=Actor.from_request(request), address=request.POST.get("console_address", ""), request=request
-        )
-    except ERRORS as exc:
-        _flash_errors(request, exc)
-    else:
-        messages.success(request, "Console address saved." if gateway.console_address else "Console address removed.")
-    return redirect("site_detail", org_slug=org_slug, site_id=gateway.site_id)
-
-
 @require_GET
 @role_required(Role.MANAGER)
 def event_list(request, org_slug: str):

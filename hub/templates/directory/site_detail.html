@@ -66,26 +66,56 @@
           </li>
         {% endif %}
       </ul>
-      {# The gateway's own web console: a link for the browser. The hub never connects to it. #}
-      {% if console_url %}
-        <div class="actions">
-          <a class="btn" href="{{ console_url }}" target="_blank" rel="noopener noreferrer">Open door controller console<span class="visually-hidden"> (opens in a new tab)</span></a>
+      {# The gateway's own web console, reached through the hub: the gateway dialled out and the hub answers down that connection. #}
+      <h3 id="console-heading">Remote console</h3>
+      <p>
+        {% if console.state == "available" %}<span class="badge badge-ok">{{ console.label }}</span>
+        {% elif console.state == "switched_off" %}<span class="badge badge-warn">{{ console.label }}</span>
+        {% else %}<span class="badge">{{ console.label }}</span>{% endif %}
+      </p>
+      <p class="hint">{{ console.detail }}</p>
+      {% if console.state == "available" and can_open_console %}
+        <form method="post" action="{% url 'console_open' org_slug=organisation.slug gateway_id=gateway.id %}" target="_blank" rel="noopener">
+          {% csrf_token %}
+          <div class="actions"><button class="btn" type="submit">Open remote console<span class="visually-hidden"> (opens in a new tab)</span></button></div>
+        </form>
+        <p class="hint">Asks for your authenticator app or passkey first. The session is for you alone, lasts {{ console_minutes }} minutes unless you extend it, and is recorded in the audit log here and on the gateway.</p>
+      {% elif console.state == "available" %}
+        <p class="hint">An Owner or an Admin can open it.</p>
+      {% endif %}
+      {% if console_sessions %}
+        <h4 id="console-sessions-heading">Open remote console sessions</h4>
+        <div class="table-wrap">
+          <table aria-labelledby="console-sessions-heading">
+            <thead><tr><th>Who</th><th>Started</th><th>Ends</th><th>From</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+            <tbody>
+              {% for session in console_sessions %}
+                <tr>
+                  <td>{{ session.user.display_name }}</td>
+                  <td class="nowrap">{{ session.started_at|date:"H:i" }} UTC</td>
+                  <td class="nowrap">{{ session.expires_at|date:"H:i" }} UTC</td>
+                  <td class="mono">{{ session.client_ip|default:"Unknown" }}</td>
+                  <td>
+                    {% if can_open_console %}
+                      <form method="post" action="{% url 'console_end' org_slug=organisation.slug session_id=session.id %}" class="inline-form">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-danger-quiet" type="submit">End<span class="visually-hidden"> the session of {{ session.user.display_name }}</span></button>
+                      </form>
+                      {% if session.user_id == user.id %}
+                        <form method="post" action="{% url 'console_extend' org_slug=organisation.slug session_id=session.id %}" class="inline-form">
+                          {% csrf_token %}
+                          <button class="btn btn-sm btn-secondary" type="submit">Extend<span class="visually-hidden"> your session</span></button>
+                        </form>
+                      {% endif %}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <p class="hint">Opens <span class="mono">{{ console_url }}</span> in a new tab. It can be reached from the site's own network, and the gateway asks for its own sign-in.</p>
-      {% elif not can_edit %}
-        <p class="hint">No door controller console address is set for this gateway. An Admin can add one here.</p>
       {% endif %}
       {% if can_edit %}
-        <h3 id="console-heading">Door controller console</h3>
-        <form method="post" action="{% url 'gateway_console_address' org_slug=organisation.slug gateway_id=gateway.id %}">
-          {% csrf_token %}
-          <div class="field">
-            <label for="console-address">Console address</label>
-            <input id="console-address" type="url" name="console_address" value="{{ gateway.console_address }}" maxlength="300" placeholder="https://192.168.1.50/ui/" autocomplete="off" inputmode="url">
-            <p class="hint">The address of this gateway's own web console on the site's network. People open it from this page and from the Apps launcher. Leave it blank to remove the link.</p>
-          </div>
-          <div class="actions"><button class="btn btn-secondary" type="submit">Save console address</button></div>
-        </form>
         <hr>
         <form method="post" action="{% url 'gateway_revoke' org_slug=organisation.slug gateway_id=gateway.id %}">
           {% csrf_token %}

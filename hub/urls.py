@@ -4,6 +4,7 @@ from django.urls import include, path
 
 from hub import health
 from hub.accounts.admin import restrict_admin_to_platform_records
+from hub.console.urls import internal_patterns as relay_internal_patterns
 
 # The admin has its own login form, which would skip the hub's rate limits, MFA and audit trail.
 # Send it through the one sign-in everyone else uses.
@@ -18,5 +19,7 @@ urlpatterns = [
     path("accounts/", include("allauth.urls")),
     path("oauth/", include("hub.accounts.oidc_urls")),
     path("api/v1/", include("hub.api.urls")),
+    # The relay's internal channel: Docker network and shared secret only (hub/console/internal.py).
+    path("internal/relay/", include(relay_internal_patterns)),
     path("", include("hub.organisations.urls")),
 ]
