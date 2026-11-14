@@ -73,8 +73,22 @@ sent when it changes and at least hourly:
 | `windows[].starts_at`, `ends_at` | UTC instants, already widened by the margin. Overnight shifts are one window |
 | `windows[].position` | The position's name on that shift (may be empty) |
 
-Only **published** shifts (never a draft), only people still employed, only sites the hub knows. Two
-shifts of one person at one site are two windows (they may touch or overlap after the margin).
+What a window is built from (Rostering's rule; the hub need not re-check it, but should know it):
+
+- one window per **published** assignment, never a draft. A published assignment with a draft removal
+  or change not yet published **keeps its window until that is published** — that is what published
+  means in Rostering. The gateway side should know this: a manager who has "removed" someone in a
+  draft has not yet removed their window;
+- only `person_ref`s and `site_ref`s the hub has **accepted** in a directory snapshot; no windows are
+  sent in a run whose directory snapshot was refused;
+- no window on a day of the person's **approved leave** (the shift's local date);
+- no window on a day after the person's **end date** (employment is checked on the shift's local
+  date, not today);
+- included when it overlaps `[horizon_start, horizon_end)` after widening by the margin.
+
+Two shifts of one person at one site are two windows (they may touch or overlap after the margin).
+Windows are rebuilt when the roster is published, leave is decided or a person ends or is
+reactivated, and at least hourly; they are sent when they changed and at least hourly.
 
 ### 2.3 Never sent
 
@@ -171,7 +185,7 @@ In `GET /sites/{site_ref}/access`, for a gateway that advertised support (see th
 | Situation | Question | Recommendation |
 |---|---|---|
 | Rostering stops sending windows (its link is switched off, removed, failing, or the organisation is suspended) | Do the hub's windows age out? | Keep serving the last windows with their `windows_valid_until`; never extend it. Show "rostered windows are stale" on the site after `horizon_end` |
-| The rostered-windows switch is turned off in Rostering | Should the hub drop the windows? | Rostering will stop sending; propose an explicit `DELETE /api/v1/rostered-windows` that Rostering calls when the switch goes off, so "not limited any more" is a deliberate signal, not silence |
+| The rostered-windows switch is turned off in Rostering, the hub refused a snapshot, the link was removed, or its token or address changed | Should the hub drop the windows? | Rostering stops sending. Until the horizon end of the last snapshot the hub accepted (up to 336 hours) the hub may still serve them; Rostering shows its owners a warning with that time ("the hub may still hold rostered windows until …; ask the hub to clear them"). Propose an explicit `DELETE /api/v1/rostered-windows` that Rostering would call in those cases (and a "clear" button in the hub console), so "not limited any more" is a deliberate signal, not silence |
 | A snapshot fails validation | Keep the previous one? | Yes, unchanged, and record the error (as the directory does) |
 | An access group is roster-limited but the organisation sends no windows | Deny everyone in it? | That is the gateway's fail policy (gateway PDR); the hub should warn when a roster-limited group exists and no windows have arrived |
 
