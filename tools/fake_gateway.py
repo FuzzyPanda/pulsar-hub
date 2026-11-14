@@ -63,6 +63,7 @@ class FakeConsole:
         self.notes: list[str] = []
         self.seen: list[dict] = []  # every request it was sent: method, path and headers
         self.local_origin = ""  # set once it is listening
+        self.audit: list[dict] = []  # the gateway's own audit record, shown on a page of its console
         self.slow_seconds = 3600.0
 
     def app(self) -> web.Application:
@@ -79,6 +80,7 @@ class FakeConsole:
         app.router.add_get("/ui/hostile", self.hostile)
         app.router.add_get("/ui/elsewhere", self.elsewhere)
         app.router.add_get("/ui/many-headers", self.many_headers)
+        app.router.add_get("/ui/audit", self.audit_page)
         app.router.add_get("/ui/cookie", self.cookie)
         app.router.add_get("/static/app.js", self.script)
         return app
@@ -194,6 +196,12 @@ class FakeConsole:
         response.headers["HX-Redirect"] = "https://evil.example/hx"
         return response
 
+    async def audit_page(self, request):
+        """The gateway's own record of remote sessions: who, from where, until when, and how each ended."""
+        sessions = [entry for entry in self.audit if entry["event"] != "request"]
+        requests = sum(1 for entry in self.audit if entry["event"] == "request")
+        return web.json_response({"sessions": sessions[-50:], "requests_recorded": requests})
+
     async def many_headers(self, request):
         response = web.Response(text="too many headers")
         for n in range(int(request.query.get("n", "250"))):
@@ -249,7 +257,7 @@ class FakeGateway:
         self.software_version = software_version
         self.console = FakeConsole()
         self.sessions: dict[str, dict] = {}
-        self.audit: list[dict] = []  # the gateway's own record of sessions and requests
+        self.audit: list[dict] = self.console.audit  # the gateway's own record of sessions and requests
         self.welcome: dict | None = None
         self.close_code: int | None = None
         self.refuse_sessions = ""  # a reason to refuse every session with, for tests
@@ -379,6 +387,8 @@ class FakeGateway:
     def _record(self, event: str, **detail) -> None:
         self.audit.append({"at": datetime.now(UTC).isoformat(), "event": event, **detail})
         del self.audit[:-2000]
+        if event != "request":
+            logger.info("audit: %s %s", event, json.dumps(detail, sort_keys=True))
 
     def _end(self, session_id: str, reason: str) -> None:
         session = self.sessions.pop(session_id, None)
