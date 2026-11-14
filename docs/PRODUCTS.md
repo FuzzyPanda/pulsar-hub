@@ -31,9 +31,11 @@ That host name is always one of `DJANGO_ALLOWED_HOSTS`.
 
 **The link.** The base address, then the launch path: the connection's own if it has one,
 otherwise the product's default from the catalogue. `{org_slug}` in the path becomes the
-organisation's slug. Pulsar Rostering's default is `/api/v1/auth/hub/start?org={org_slug}`, its
-"sign in with Pulsar Hub" (see `CONTRACTS.md`, "Opening a product from the hub"). Setting a
-connection's launch path to `/` opens the product's front page instead.
+organisation's slug and `{org_ref}` its id (the `org_ref` of `CONTRACTS.md`); use the id wherever
+the product has to recognise the organisation, because a slug is only this hub's name for it.
+Pulsar Rostering's default is `/api/v1/auth/hub/start?hub_org={org_ref}`, its "sign in with Pulsar
+Hub" (see `CONTRACTS.md`, "Opening a product from the hub"). Setting a connection's launch path to
+`/` opens the product's front page instead.
 
 **Two kinds of product.** Most products live at one address per organisation (`kind=ADDRESS`, the
 default). Pulsar Access Control lives at each site (`kind=SITES`): its connection holds no
@@ -57,7 +59,7 @@ Two steps. No migration, no new view and no new template.
            name="Pulsar Gym",
            summary="Members, classes and check-in.",
            icon="activity",  # a key of ICONS in the same file; leave out for the generic icon
-           launch_path="/",  # where on its address the product opens; may use {org_slug}
+           launch_path="/",  # where on its address the product opens; may use {org_slug} and {org_ref}
            minimum_role=Role.STAFF,  # the least role that sees the tile
            address_hint="Where this organisation opens Pulsar Gym.",
        ),

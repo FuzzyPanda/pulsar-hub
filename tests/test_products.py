@@ -45,7 +45,8 @@ def test_catalogue_lists_rostering_and_access_control():
     assert keys == ["rostering", "access_control"]
     rostering = catalogue.get_product("rostering")
     assert rostering.kind == catalogue.ADDRESS and rostering.minimum_role == Role.STAFF
-    assert rostering.launch_path == "/api/v1/auth/hub/start?org={org_slug}"
+    # Names the organisation by its id, so the tile does not rely on the two products' slugs matching.
+    assert rostering.launch_path == "/api/v1/auth/hub/start?hub_org={org_ref}"
     assert catalogue.get_product("access_control").kind == catalogue.SITES
     assert catalogue.get_product("nothing") is None
 
@@ -119,13 +120,35 @@ def test_a_gateway_console_address_cannot_use_the_host_placeholder():
     assert clean_base_address("https://192.168.1.211/ui/", allow_host_placeholder=False) == "https://192.168.1.211/ui/"
 
 
-@pytest.mark.parametrize("typed", ["", "/", "/login", "/api/v1/auth/hub/start?org={org_slug}"])
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "",
+        "/",
+        "/login",
+        "/api/v1/auth/hub/start?org={org_slug}",
+        "/api/v1/auth/hub/start?hub_org={org_ref}",
+        "/o/{org_slug}/open?ref={org_ref}",
+    ],
+)
 def test_launch_paths_that_are_accepted(typed):
     assert clean_launch_path(typed) == typed
 
 
 @pytest.mark.parametrize(
-    "typed", ["login", "//evil.example/x", "https://evil.example/", "/a b", "/x#y", "/{host}", "/x\\y", "/" + "a" * 300]
+    "typed",
+    [
+        "login",
+        "//evil.example/x",
+        "https://evil.example/",
+        "/a b",
+        "/x#y",
+        "/{host}",
+        "/{org_id}",
+        "/{org_ref",
+        "/x\\y",
+        "/" + "a" * 300,
+    ],
 )
 def test_launch_paths_that_are_refused(typed):
     with pytest.raises(ValidationError):
@@ -153,6 +176,27 @@ def test_launch_url_fills_in_the_host_and_the_organisation():
     assert launch_url("javascript:alert(1)", "/", host="x", org_slug="gym") == ""
     assert launch_url("http://{host}:8080", "/", host="", org_slug="gym") == ""
     assert launch_url("https://rostering.example.com", "//evil.example", host="x", org_slug="gym") == ""
+
+
+def test_launch_url_fills_in_the_organisations_id():
+    ref = "5b3dd84c-d13d-4593-ae9e-b914ae48b64e"
+    path = "/api/v1/auth/hub/start?hub_org={org_ref}"
+    assert (
+        launch_url("http://{host}:8080", path, host="192.168.1.143", org_slug="gym", org_ref=ref)
+        == f"http://192.168.1.143:8080/api/v1/auth/hub/start?hub_org={ref}"
+    )
+    # Both placeholders in one path; each is escaped, so neither can add to the address.
+    assert (
+        launch_url("https://r.example.com", "/o/{org_slug}?ref={org_ref}", host="x", org_slug="gym", org_ref=ref)
+        == f"https://r.example.com/o/gym?ref={ref}"
+    )
+    assert (
+        launch_url("https://r.example.com", "/x?ref={org_ref}", host="x", org_slug="gym", org_ref="a/b&c=d")
+        == "https://r.example.com/x?ref=a%2Fb%26c%3Dd"
+    )
+    # A path that asks for the id is not offered as a link without one.
+    assert launch_url("https://r.example.com", path, host="x", org_slug="gym") == ""
+    assert launch_url("https://r.example.com", path, host="x", org_slug="gym", org_ref="") == ""
     assert resolve_address("", host="x") == ""
 
 
@@ -286,7 +330,12 @@ def test_a_console_address_is_not_part_of_what_a_gateway_is_sent(world_a):
 
 # --- the launcher on the overview page ------------------------------------------------------------
 
-ROSTERING_LINK = 'href="https://rostering.zzamarkerzz.example.test/api/v1/auth/hub/start?org=world-a"'
+
+def rostering_link(world, base="https://rostering.zzamarkerzz.example.test") -> str:
+    """The Rostering tile's link: its sign-in through the hub, for this organisation by its id."""
+    return f'href="{base}/api/v1/auth/hub/start?hub_org={world.organisation.pk}"'
+
+
 CONSOLE_LINK = 'href="https://zzamarkerzz-gateway.example.test/ui/"'
 
 
@@ -294,7 +343,7 @@ def test_staff_see_the_apps_they_may_use_and_nothing_else(client, world_a):
     f.sign_in(client, world_a.staff)
     body = page(client, "org_home", world_a)
     assert body.index('id="apps-heading"') < body.index("Active members of this organisation")  # the first thing
-    assert "Pulsar Rostering" in body and ROSTERING_LINK in body
+    assert "Pulsar Rostering" in body and rostering_link(world_a) in body
     assert 'target="_blank" rel="noopener noreferrer"' in body
     assert "Pulsar Access Control" not in body and "Not connected" not in body and "Manage apps" not in body
 
@@ -302,13 +351,13 @@ def test_staff_see_the_apps_they_may_use_and_nothing_else(client, world_a):
 def test_an_owner_also_sees_what_is_not_connected(client, world_a):
     f.sign_in(client, world_a.owner, mfa=True)
     body = page(client, "org_home", world_a)
-    assert ROSTERING_LINK in body
+    assert rostering_link(world_a) in body
     assert "Pulsar Access Control" in body and "Not connected" in body and "Manage apps" in body
     assert CONSOLE_LINK not in body  # not connected, so no link, whatever the gateway holds
     for role in ("admin", "manager"):
         f.sign_in(client, world_a.user(role), mfa=True)
         body = page(client, "org_home", world_a)
-        assert ROSTERING_LINK in body and "Pulsar Access Control" not in body and "Not connected" not in body
+        assert rostering_link(world_a) in body and "Pulsar Access Control" not in body and "Not connected" not in body
 
 
 def test_access_control_lists_each_site_with_a_console_or_says_what_to_do(client, world_a):
@@ -344,9 +393,9 @@ def test_the_host_placeholder_follows_the_name_the_browser_used(client, world_a)
     f.sign_in(client, world_a.staff)
     url = reverse("org_home", kwargs={"org_slug": world_a.organisation.slug})
     by_name = client.get(url, HTTP_HOST="hub.test").content.decode()
-    assert 'href="http://hub.test:8080/api/v1/auth/hub/start?org=world-a"' in by_name
+    assert rostering_link(world_a, "http://hub.test:8080") in by_name
     by_other_name = client.get(url, HTTP_HOST="localhost:8000").content.decode()
-    assert 'href="http://localhost:8080/api/v1/auth/hub/start?org=world-a"' in by_other_name
+    assert rostering_link(world_a, "http://localhost:8080") in by_other_name
     # A host name the hub does not answer to never reaches a link.
     assert client.get(url, HTTP_HOST="evil.example").status_code == 400
 
@@ -359,6 +408,16 @@ def test_a_launch_path_override_replaces_the_default(client, world_a):
     f.sign_in(client, world_a.staff)
     body = page(client, "org_home", world_a)
     assert 'href="https://r.example.test/"' in body and "auth/hub/start" not in body
+    # A connection that still names the organisation by its slug keeps working.
+    with organisation_context(world_a.organisation):
+        services.update_app(
+            world_a.connected_app,
+            actor=actor(world_a, "owner"),
+            base_address="https://r.example.test",
+            launch_path="/api/v1/auth/hub/start?org={org_slug}",
+        )
+    body = page(client, "org_home", world_a)
+    assert 'href="https://r.example.test/api/v1/auth/hub/start?org=world-a"' in body
 
 
 def test_an_app_that_is_turned_off_shows_only_to_owners(client, world_a):
@@ -374,7 +433,7 @@ def test_an_app_that_is_turned_off_shows_only_to_owners(client, world_a):
     assert "Pulsar Rostering" not in body and "No apps are connected" in body
     f.sign_in(client, world_a.owner, mfa=True)
     body = page(client, "org_home", world_a)
-    assert "Pulsar Rostering" in body and "Turned off" in body and ROSTERING_LINK not in body
+    assert "Pulsar Rostering" in body and "Turned off" in body and rostering_link(world_a) not in body
 
 
 # --- Settings and the site page -------------------------------------------------------------------

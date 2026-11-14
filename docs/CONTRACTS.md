@@ -77,14 +77,17 @@ The link is followed by the person's browser; the hub makes no call of its own.
 
 | Product | Link | What the product does with it |
 |---|---|---|
-| Pulsar Rostering | `{base}/api/v1/auth/hub/start?org={org_slug}` | Starts its "sign in with Pulsar Hub": an authorisation-code request to this hub as OIDC provider (above), for the organisation whose hub slug is `org_slug`, and lands the person signed in. Rostering registers its own client with the hub |
+| Pulsar Rostering | `{base}/api/v1/auth/hub/start?hub_org={org_ref}` | Starts its "sign in with Pulsar Hub": an authorisation-code request to this hub as OIDC provider (above) with `org={org_ref}`, and lands the person signed in. Rostering registers its own client with the hub |
 | Pulsar Access Control | The console address an Admin recorded for the site's gateway | The gateway's own web console, with the gateway's own sign-in. Reachable from the site's network only |
 
-`{base}` is the address an Owner entered for the organisation. `org_slug` is the hub's slug, sent
-so that Rostering can pick the organisation before anyone is signed in; it grants nothing, and
-Rostering must take the organisation it trusts from the `org_ref` claim of the token it then
-receives. An Owner can replace the path for one organisation (for a product version that has no
-such endpoint yet) without a change here.
+`{base}` is the address an Owner entered for the organisation. `org_ref` is this hub's id for the
+organisation, the same value as the `org_ref` claim, so the link works whatever the organisation is
+called in the product (the two slugs need not match). It is sent so that the hub's authorisation
+screen is asked for the right organisation before anyone is signed in; it grants nothing, the hub
+refuses it for a person who does not belong to that organisation, and Rostering must take the
+organisation it trusts from the `org_ref` claim of the token it then receives. A launch path may use
+`{org_slug}` (the hub's slug) as well or instead. An Owner can replace the path for one organisation
+(for a product version that has no such endpoint yet) without a change here.
 
 ## Gateway and hub (built: hub side H3, gateway side in `Pulsar-Access-Control`)
 
