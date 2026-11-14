@@ -322,7 +322,11 @@ by the next.
   most 20 may remain.
   - **A row that carries the key replaces the person's positions; a row without it leaves them as
     they were.** So a sender that stops sending positions takes nobody's access away; an empty
-    list does.
+    list does. **Switching positions off is not silence** (the owner's decision, 2026-11-14): when
+    a person switches positions off in the sender, the sender carries `positions: []` on every
+    row until the hub has taken one such list in full (no `rejected` rows), and only then leaves
+    the key out. Pulsar Rostering does this. A sender that loses its link instead (a removed link,
+    another hub's address) clears nothing; an Admin then takes the positions off the groups here.
   - **A person whose `status` is `ended`, or who is left out of the list, holds no position**,
     whatever the row says. If they come back, a position has to be sent again before it gives
     them anything.
