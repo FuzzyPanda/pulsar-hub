@@ -40,6 +40,8 @@ def call(action: str, payload: dict, *, timeout: float = 3.0) -> dict | None:
 
 def start_session(*, gateway_id: str, frame: dict, return_url: str) -> tuple[bool, str]:
     """Ask the gateway, through its tunnel, to accept a session. (accepted, reason if not)."""
+    # The relay gives the gateway five seconds to accept (the contract's figure); a little more
+    # than that here, and no longer: a web worker is waiting.
     answer = call("session/start", {"gateway_id": gateway_id, "frame": frame, "return_url": return_url}, timeout=8.0)
     if answer is None:
         return False, "relay_unreachable"

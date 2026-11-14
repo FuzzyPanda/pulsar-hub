@@ -63,9 +63,11 @@ def console_open(request, org_slug: str, gateway_id):
         "console/handoff.html",
         {"action": f"{session.origin}/__hub__/handoff", "token": token, "site": gateway.site, "session": session},
     )
-    # The page holds a one-time secret: never stored, never sent on as a referrer.
+    # The page holds a one-time secret: never stored. Its form names the hub's origin, and only
+    # its origin, to the console origin: the relay accepts the hand-off from nowhere else, and a
+    # browser sends `Origin: null` under the hub's usual same-origin referrer policy.
     response["Cache-Control"] = "no-store"
-    response["Referrer-Policy"] = "no-referrer"
+    response["Referrer-Policy"] = "strict-origin"
     return response
 
 

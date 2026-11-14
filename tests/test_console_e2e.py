@@ -148,7 +148,7 @@ class ConsoleBrowser:
 
     def hand_off(self, token: str):
         body = urlencode({"token": token}).encode()
-        headers = {"Content-Type": "application/x-www-form-urlencoded", "Origin": "https://hub.test"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded", "Origin": "http://testserver"}
         return self.request("POST", "/__hub__/handoff", body=body, headers=headers)
 
 

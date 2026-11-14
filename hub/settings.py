@@ -153,6 +153,10 @@ CSRF_COOKIE_SECURE = not INSECURE_COOKIES
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+# No script the hub serves reads the CSRF cookie: every page carries the token itself (forms, and
+# hx-headers on <body>). Keeping it from script matters on a bench, where a remote console shares
+# the hub's host name and its pages' script would otherwise be able to read it.
+CSRF_COOKIE_HTTPONLY = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
@@ -285,7 +289,7 @@ if CONSOLE_ORIGIN_TEMPLATE:
     from relay.config import ConfigError, check_origin_template
 
     try:
-        check_origin_template(CONSOLE_ORIGIN_TEMPLATE, allow_plain_http=INSECURE_COOKIES)
+        check_origin_template(CONSOLE_ORIGIN_TEMPLATE, allow_plain_http=INSECURE_COOKIES, hub_base_url=HUB_BASE_URL)
     except ConfigError as exc:
         raise ImproperlyConfigured(str(exc)) from exc
     if len(RELAY_INTERNAL_SECRET) < 32:

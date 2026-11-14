@@ -34,6 +34,7 @@ from tests.test_auth import secret_of, totp_code
 pytestmark = pytest.mark.django_db
 
 SECRET = "test-only-relay-secret-0123456789abcdef"
+HUB = "http://testserver"  # the hub's origin as the test client's browser reached it
 End = ConsoleSession.EndReason
 
 
@@ -164,11 +165,14 @@ def test_an_owner_opens_a_session_after_a_step_up(client, world, relay):
     origin = f"https://{world.gateway.pk.hex}.console.test"
     # The page posts the one-time token to the console origin: it is never in an address.
     assert f'<form id="console-handoff" method="post" action="{origin}/__hub__/handoff"' in body
-    assert response["Cache-Control"] == "no-store" and response["Referrer-Policy"] == "no-referrer"
+    # strict-origin, so that the form's POST names the hub's origin (and only that) to the console
+    # origin: under the hub's usual same-origin policy a browser would send `Origin: null`.
+    assert response["Cache-Control"] == "no-store" and response["Referrer-Policy"] == "strict-origin"
     assert token and len(token) >= 43 and token not in response.headers.get("Location", "")
 
     (session,) = live(world)
     assert session.user == world.owner and session.role == "owner" and session.origin == origin
+    assert session.hub_origin == HUB
     assert session.started_at is not None and session.handoff_used_at is None and session.cookie_hash == ""
     lifetime = session.expires_at - session.started_at
     assert timedelta(minutes=14, seconds=50) < lifetime <= timedelta(minutes=15)
@@ -347,7 +351,7 @@ def test_a_revoked_gateway_cannot_be_opened(client, world, relay):
 def test_the_hand_off_token_is_redeemed_once_for_the_browsers_cookie(client, world, relay):
     _, token = open_as(client, world)
     (session,) = live(world)
-    answer = internal(client, "handoff/redeem", {"token": token, "origin": session.origin})
+    answer = internal(client, "handoff/redeem", {"token": token, "origin": session.origin, "hub_origin": HUB})
     assert answer.status_code == 200 and answer["Cache-Control"] == "no-store"
     body = answer.json()
     assert body["session"] == str(session.pk) and len(body["cookie_secret"]) >= 43
@@ -356,7 +360,7 @@ def test_the_hand_off_token_is_redeemed_once_for_the_browsers_cookie(client, wor
     assert body["cookie_secret"] not in str(vars(session))
 
     # A second presentation of the same token gives nothing, and is recorded.
-    again = internal(client, "handoff/redeem", {"token": token, "origin": session.origin})
+    again = internal(client, "handoff/redeem", {"token": token, "origin": session.origin, "hub_origin": HUB})
     assert again.status_code == 403 and "cookie_secret" not in again.content.decode()
     assert [e.data["reason"] for e in events(world, "console.session_refused")] == ["handoff_reused"]
     assert internal(client, "handoff/redeem", {"token": "never-issued", "origin": session.origin}).status_code == 403
@@ -381,7 +385,9 @@ def test_a_hand_off_is_refused_when_late_over_or_on_the_wrong_origin(client, wor
     with organisation_context(world.organisation):
         spoil(session)
     answer = internal(
-        client, "handoff/redeem", {"token": token, "origin": f"https://{world.gateway.pk.hex}.console.test"}
+        client,
+        "handoff/redeem",
+        {"token": token, "origin": f"https://{world.gateway.pk.hex}.console.test", "hub_origin": HUB},
     )
     assert answer.status_code == 403
     assert [e.data["reason"] for e in events(world, "console.session_refused")] == [reason]
@@ -490,7 +496,7 @@ def test_the_site_page_lists_open_sessions_with_end_and_extend(client, world, re
 def started_session(client, world, relay, role="owner") -> ConsoleSession:
     _, token = open_as(client, world, role)
     (session,) = [s for s in live(world) if s.user == world.user(role)]
-    internal(client, "handoff/redeem", {"token": token, "origin": session.origin})
+    internal(client, "handoff/redeem", {"token": token, "origin": session.origin, "hub_origin": HUB})
     session.refresh_from_db()
     return session
 
@@ -774,3 +780,140 @@ def test_an_export_holds_no_console_secret(client, world, relay):
     for digest in (session.token_hash, session.cookie_hash, session.browser_hash):
         assert digest and digest not in text
     assert "cookie_hash" not in text and "browser_hash" not in text and "token_hash" not in text
+
+
+# --- from the security review of 2026-11-15 -------------------------------------------------------
+
+
+def test_a_hand_off_is_honoured_only_from_the_hub_origin_the_session_was_opened_on(client, world, relay):
+    """Finding 4. The relay passes on the `Origin` of the hand-off POST. Anything but the hub
+    origin the person opened the console from is refused, and the token is not spent on it."""
+    _, token = open_as(client, world)
+    (session,) = live(world)
+    for stranger in (
+        "https://evil.example",
+        session.origin,
+        "",
+        "http://testserver.evil.example",
+        "https://testserver",
+    ):
+        answer = internal(client, "handoff/redeem", {"token": token, "origin": session.origin, "hub_origin": stranger})
+        assert answer.status_code == 403, stranger
+    session.refresh_from_db()
+    assert session.handoff_used_at is None and session.cookie_hash == ""
+    reasons = [e.data["reason"] for e in events(world, "console.session_refused")]
+    assert reasons == ["handoff_not_from_hub"] * 5
+    assert (
+        internal(client, "handoff/redeem", {"token": token, "origin": session.origin, "hub_origin": HUB}).status_code
+        == 200
+    )
+
+
+def test_a_late_report_about_an_earlier_tunnel_changes_nothing(client, world, relay):
+    """Finding 9. `tunnel.closed` for a connection the gateway has since replaced arrives late:
+    it must not mark the new tunnel closed or end the sessions on it."""
+    gateway = world.gateway
+    assert services.tunnel_opened(
+        gateway.pk, protocol="pulsar-console.v1", software_version="", console_enabled=True, tunnel_id="first"
+    )
+    assert services.tunnel_opened(
+        gateway.pk, protocol="pulsar-console.v1", software_version="", console_enabled=True, tunnel_id="second"
+    )
+    session = started_session(client, world, relay)
+    internal(client, "event", {"event": "tunnel.closed", "gateway_id": str(gateway.pk), "tunnel": "first"})
+    gateway.refresh_from_db()
+    assert gateway.tunnel_connected and gateway.tunnel_id == "second" and reason_of(session) == ""
+    internal(client, "event", {"event": "tunnel.closed", "gateway_id": str(gateway.pk), "tunnel": "second"})
+    gateway.refresh_from_db()
+    assert not gateway.tunnel_connected and reason_of(session) == End.TUNNEL_DROPPED
+    # The heartbeat carries the relay's id for each tunnel, and its word stands.
+    f.open_console_tunnel(gateway)
+    beat(client, world, gateways=[{"id": str(gateway.pk), "console_enabled": True, "tunnel": "third"}])
+    gateway.refresh_from_db()
+    assert gateway.tunnel_id == "third"
+
+
+def test_opening_is_rationed_so_that_waiting_on_gateways_cannot_stall_the_hub(client, world, relay, monkeypatch):
+    """Finding 10. Each Open makes a web worker wait for the gateway. The waits are rationed:
+    per person, per gateway, a rest for a gateway that stayed silent, and one waiting at a time."""
+    monkeypatch.setattr(services, "OPENS_PER_MINUTE_PER_USER", 3)
+    for _ in range(3):
+        response, token = open_as(client, world)
+        assert token
+    response, token = open_as(client, world)
+    assert response.status_code == 302 and token is None
+    assert "Too many attempts" in client.get(response["Location"]).content.decode()
+    assert relay.actions().count("session/start") == 3
+    assert [e.data["reason"] for e in events(world, "console.session_refused")] == ["rate_limited"]
+    # Another person is not held up by the first one's count; the gateway has its own.
+    monkeypatch.setattr(services, "OPENS_PER_MINUTE_PER_GATEWAY", 5)  # the four above count for the gateway too
+    assert open_as(client, world, "admin")[1]
+    assert open_as(client, world, "admin")[1] is None
+    assert [e.data["reason"] for e in events(world, "console.session_refused")][-1] == "rate_limited"
+
+
+def test_a_gateway_that_did_not_answer_is_rested_and_only_one_open_waits_at_a_time(client, world, relay):
+    from django.core.cache import cache
+
+    relay.start_answer = {"ok": False, "reason": "gateway_silent"}
+    assert open_as(client, world)[1] is None
+    relay.start_answer = {"ok": True}
+    # For the next minute nobody waits on that gateway again: refused at once, the relay not asked.
+    asked = relay.actions().count("session/start")
+    response, token = open_as(client, world, "admin")
+    assert token is None and "did not answer a moment ago" in client.get(response["Location"]).content.decode()
+    assert relay.actions().count("session/start") == asked
+    reasons = [e.data["reason"] for e in events(world, "console.session_refused")]
+    assert reasons == ["gateway_silent", "gateway_resting"]
+    cache.clear()
+    # Someone else's Open is waiting on its gateway right now: this one is told to try again.
+    assert services._take_waiting_place()
+    response, token = open_as(client, world)
+    assert token is None and "being opened just now" in client.get(response["Location"]).content.decode()
+    assert relay.actions().count("session/start") == asked and not live(world)
+    assert [e.data["reason"] for e in events(world, "console.session_refused")][-1] == "hub_busy"
+    cache.clear()
+    assert open_as(client, world)[1]
+    assert not cache.get("console-open-waiting:0")  # the place is given back
+
+
+def test_the_hubs_csrf_cookie_is_kept_from_script(client):
+    """On a bench a remote console shares the hub's host name, so its pages' script could read
+    any hub cookie that script may read. No hub page needs to read this one."""
+    response = client.get(reverse("account_login"))
+    assert response.cookies["csrftoken"]["httponly"] is True
+    assert django_settings.CSRF_COOKIE_HTTPONLY and django_settings.SESSION_COOKIE_HTTPONLY
+
+
+def test_error_reports_carry_no_local_variables(monkeypatch):
+    """A stack frame's locals would include a gateway credential or a console cookie's secret."""
+    import sentry_sdk
+
+    from hub import monitoring
+
+    seen = {}
+    monkeypatch.setattr(sentry_sdk, "init", lambda **options: seen.update(options))
+    monitoring.init_error_monitoring(dsn="https://key@sentry.invalid/1", environment="test")
+    assert seen["include_local_variables"] is False and seen["send_default_pii"] is False
+
+
+def test_the_bench_mode_and_a_console_under_the_hubs_own_host_are_refused_at_start():
+    import os
+    import subprocess
+    import sys
+
+    def start(**env):
+        env = {**os.environ, "DJANGO_SETTINGS_MODULE": "hub.test_settings", **env}
+        return subprocess.run([sys.executable, "-c", "import django; django.setup()"], env=env, capture_output=True)  # noqa: S603
+
+    assert start().returncode == 0
+    under = start(CONSOLE_ORIGIN_TEMPLATE="https://{gateway}.console.hub.test")
+    assert under.returncode != 0 and b"different registrable domains" in under.stderr
+    lab = start(CONSOLE_ORIGIN_TEMPLATE="http://{host}:8081", INSECURE_COOKIES="True")
+    assert lab.returncode != 0 and b"plain-HTTP lab mode" in lab.stderr
+    assert (
+        start(
+            CONSOLE_ORIGIN_TEMPLATE="http://{host}:8081", INSECURE_COOKIES="True", HUB_BASE_URL="http://hub.test"
+        ).returncode
+        == 0
+    )

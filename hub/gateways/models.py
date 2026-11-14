@@ -80,6 +80,9 @@ class Gateway(OrganisationScopedModel):
     tunnel_seen_at = models.DateTimeField(null=True, blank=True)
     # The protocol version last agreed. Blank until this gateway has opened a tunnel at all.
     tunnel_protocol = models.CharField(max_length=32, blank=True)
+    # The relay's name for the connection that is open now. A report that an earlier connection
+    # closed, arriving late, is recognised by it and ignored.
+    tunnel_id = models.CharField(max_length=32, blank=True)
     # Whether the gateway says its remote console is switched on. Set on the gateway, by someone
     # on site, and off unless they did: the hub can read it and cannot change it.
     console_enabled = models.BooleanField(default=False)

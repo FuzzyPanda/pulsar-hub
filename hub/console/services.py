@@ -19,6 +19,7 @@ from datetime import timedelta
 from allauth.usersessions.models import UserSession
 from django.conf import settings
 from django.contrib.sessions.models import Session
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.urls import reverse
@@ -44,6 +45,15 @@ HANDOFF_SECONDS = 60
 # gone, and a tunnel nobody vouches for is shown as not connected.
 TUNNEL_STALE_SECONDS = 45
 CONSOLE_ROLES = (Role.OWNER, Role.ADMIN)
+# Opening a session makes a web worker wait for the gateway's answer (five seconds at most, by
+# the contract). The workers are few and synchronous, so that wait is rationed: so many Opens a
+# minute per person and per gateway, a minute's rest for a gateway that did not answer, and only
+# this many Opens waiting at once on the whole hub.
+OPENS_PER_MINUTE_PER_USER = 10
+OPENS_PER_MINUTE_PER_GATEWAY = 20
+OPENS_WAITING_AT_ONCE = 1
+SILENT_GATEWAY_REST_SECONDS = 60
+OPEN_WAIT_SECONDS = 8.0
 
 EndReason = ConsoleSession.EndReason
 
@@ -140,6 +150,30 @@ def record_refusal(*, gateway: Gateway, request, reason: str) -> None:
 # --- opening, extending and ending, by a person ---------------------------------------------------
 
 
+def _counted(key: str, limit: int, *, seconds: int = 60) -> bool:
+    """Count one more of `key` in this window. False when that is over `limit`."""
+    cache.add(key, 0, seconds)
+    try:
+        return cache.incr(key) <= limit
+    except ValueError:  # it expired between the two calls
+        cache.set(key, 1, seconds)
+        return True
+
+
+def _take_waiting_place() -> str:
+    """One of the few places for an Open that is waiting on a gateway. "" when all are taken."""
+    for place in range(OPENS_WAITING_AT_ONCE):
+        key = f"console-open-waiting:{place}"
+        if cache.add(key, 1, int(OPEN_WAIT_SECONDS) + 2):
+            return key
+    return ""
+
+
+def _hub_origin(request) -> str:
+    """The origin of the hub as this browser reached it: what its hand-off POST will name."""
+    return f"{request.scheme}://{request.get_host()}".lower()
+
+
 def _browser_hash(request) -> str:
     key = getattr(request.session, "session_key", None)
     return hash_token(key) if key else ""
@@ -170,6 +204,12 @@ def open_session(gateway: Gateway, *, actor: Actor, request) -> tuple[ConsoleSes
     browser = _browser_hash(request)
     if not browser:
         raise refuse("no_browser_session", "Sign in again to open the console.")
+    if cache.get(f"console-open-silent:{gateway.pk}"):
+        raise refuse("gateway_resting", "The gateway did not answer a moment ago. Try again in a minute.")
+    within_limits = _counted(f"console-open-user:{user.pk}", OPENS_PER_MINUTE_PER_USER)
+    within_limits = _counted(f"console-open-gateway:{gateway.pk}", OPENS_PER_MINUTE_PER_GATEWAY) and within_limits
+    if not within_limits:
+        raise refuse("rate_limited", "Too many attempts to open this console. Wait a minute and try again.")
 
     now = timezone.now()
     token = secrets.token_urlsafe(32)
@@ -191,6 +231,7 @@ def open_session(gateway: Gateway, *, actor: Actor, request) -> tuple[ConsoleSes
                     user=user,
                     role=actor.membership.role,
                     origin=console_origin(gateway, host=browser_host(request)),
+                    hub_origin=_hub_origin(request),
                     expires_at=now + timedelta(minutes=settings.CONSOLE_SESSION_MINUTES),
                     token_hash=hash_token(token),
                     handoff_expires_at=now + timedelta(seconds=HANDOFF_SECONDS),
@@ -216,7 +257,18 @@ def open_session(gateway: Gateway, *, actor: Actor, request) -> tuple[ConsoleSes
     return_url = request.build_absolute_uri(
         reverse("site_detail", kwargs={"org_slug": session.organisation.slug, "site_id": gateway.site_id})
     )
-    accepted, reason = relay_client.start_session(gateway_id=str(gateway.pk), frame=frame, return_url=return_url)
+    place = _take_waiting_place()
+    if not place:
+        accepted, reason = False, "hub_busy"
+    else:
+        try:
+            accepted, reason = relay_client.start_session(
+                gateway_id=str(gateway.pk), frame=frame, return_url=return_url
+            )
+        finally:
+            cache.delete(place)
+    if reason == "gateway_silent":
+        cache.set(f"console-open-silent:{gateway.pk}", 1, SILENT_GATEWAY_REST_SECONDS)
     if not accepted:
         ConsoleSession.objects.filter(pk=session.pk, ended_at__isnull=True).update(
             ended_at=timezone.now(), end_reason=EndReason.GATEWAY_REFUSED
@@ -226,7 +278,8 @@ def open_session(gateway: Gateway, *, actor: Actor, request) -> tuple[ConsoleSes
             "busy": "The gateway has no room for another remote session just now.",
             "not_connected": "The gateway is not connected just now.",
             "relay_unreachable": "The hub's relay could not be reached. Try again in a moment.",
-            "gateway_silent": "The gateway did not answer. Try again in a moment.",
+            "gateway_silent": "The gateway did not answer. Try again in a minute.",
+            "hub_busy": "Another remote console is being opened just now. Try again in a few seconds.",
         }.get(reason, "The gateway did not accept the session.")
         raise refuse(reason, words)
     started = ConsoleSession.objects.filter(pk=session.pk, ended_at__isnull=True).update(started_at=now)
@@ -468,7 +521,9 @@ def tunnel_refused(gateway_id, offered: str) -> None:
     logger.warning("gateway %s offered no console protocol this hub speaks: %s", gateway.pk, offered[:120])
 
 
-def tunnel_opened(gateway_id, *, protocol: str, software_version: str, console_enabled: bool) -> bool:
+def tunnel_opened(
+    gateway_id, *, protocol: str, software_version: str, console_enabled: bool, tunnel_id: str = ""
+) -> bool:
     gateway = _gateway_by_id(gateway_id)
     if gateway is None or not _may_tunnel(gateway):
         return False
@@ -481,6 +536,7 @@ def tunnel_opened(gateway_id, *, protocol: str, software_version: str, console_e
             "tunnel_changed_at": now,
             "tunnel_seen_at": now,
             "tunnel_protocol": protocol[:32],
+            "tunnel_id": tunnel_id[:32],
         }
         if software_version and software_version[:64] != gateway.software_version:
             fields["software_version"] = software_version[:64]
@@ -507,9 +563,13 @@ def _set_console_enabled(gateway: Gateway, enabled: bool) -> None:
         end_for_gateway(gateway, EndReason.GATEWAY_ENDED)
 
 
-def tunnel_closed(gateway_id) -> None:
+def tunnel_closed(gateway_id, tunnel_id: str = "") -> None:
+    """A tunnel has closed. The report names the connection: one that arrives after the gateway
+    has already opened another is about the old connection, and changes nothing."""
     gateway = _gateway_by_id(gateway_id)
     if gateway is None:
+        return
+    if tunnel_id and gateway.tunnel_id and tunnel_id != gateway.tunnel_id:
         return
     with organisation_context(gateway.organisation), transaction.atomic():
         Gateway.objects.filter(pk=gateway.pk).update(tunnel_connected=False, tunnel_changed_at=timezone.now())
@@ -550,9 +610,10 @@ def session_ended_by_relay(session_id, reason: str) -> None:
         _end(session, _RELAY_END_REASONS.get(reason, EndReason.GATEWAY_ENDED), ended_by=ended_by, notify=False)
 
 
-def redeem_handoff(token: str, origin: str) -> dict | None:
+def redeem_handoff(token: str, origin: str, hub_origin: str = "") -> dict | None:
     """Exchange a hand-off token for the browser's console cookie. Once, within a minute, on the
-    session's own console origin, and only while the session is otherwise still valid."""
+    session's own console origin, posted from a page of the hub origin the session was opened on,
+    and only while the session is otherwise still valid."""
     if not token:
         return None
     # unscoped: looked up by its secret token; the bearer's organisation follows from the row
@@ -575,6 +636,9 @@ def redeem_handoff(token: str, origin: str) -> dict | None:
             problem = "over"
         elif session.origin.lower() != (origin or "").lower():
             problem = "handoff_wrong_origin"
+        elif session.hub_origin and session.hub_origin != (hub_origin or "").lower():
+            # Posted from somewhere that is not the hub: the token is not spent, and not honoured.
+            problem = "handoff_not_from_hub"
         elif _invalid_reason(session):
             problem = "over"
         if problem:
@@ -602,10 +666,11 @@ def heartbeat(gateways: list, session_ids: list) -> dict:
     tunnel or a session the relay no longer holds is recorded as gone.
     """
     now = timezone.now()
-    held = {}
+    held, tunnel_ids = {}, {}
     for item in gateways if isinstance(gateways, list) else []:
         if isinstance(item, dict) and item.get("id"):
             held[str(item["id"])] = item.get("console_enabled") is True
+            tunnel_ids[str(item["id"])] = str(item.get("tunnel") or "")[:32]
     close: list[str] = []
     seen: set[str] = set()
     # unscoped: the relay's own list of tunnels, each authenticated by its gateway's credential
@@ -619,6 +684,8 @@ def heartbeat(gateways: list, session_ids: list) -> dict:
             fields = {"tunnel_seen_at": now}
             if not gateway.tunnel_connected:
                 fields.update(tunnel_connected=True, tunnel_changed_at=now)
+            if tunnel_ids.get(str(gateway.pk)) and tunnel_ids[str(gateway.pk)] != gateway.tunnel_id:
+                fields["tunnel_id"] = tunnel_ids[str(gateway.pk)]  # the relay holds the tunnels; its word stands
             Gateway.objects.filter(pk=gateway.pk).update(**fields)
             _set_console_enabled(gateway, held[str(gateway.pk)])
     close.extend(gateway_id for gateway_id in held if gateway_id not in seen)

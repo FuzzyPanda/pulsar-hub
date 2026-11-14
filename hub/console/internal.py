@@ -80,13 +80,16 @@ def tunnel_opened(request, payload):
         protocol=str(payload.get("protocol") or ""),
         software_version=str(payload.get("software_version") or ""),
         console_enabled=payload.get("console_enabled") is True,
+        tunnel_id=str(payload.get("tunnel") or ""),
     )
     return _answer() if opened else _answer({"detail": "This gateway may not open a tunnel."}, status=409)
 
 
 @relay_only
 def handoff_redeem(request, payload):
-    answer = services.redeem_handoff(str(payload.get("token") or ""), str(payload.get("origin") or ""))
+    answer = services.redeem_handoff(
+        str(payload.get("token") or ""), str(payload.get("origin") or ""), str(payload.get("hub_origin") or "")
+    )
     if answer is None:
         return _answer({"detail": "That hand-off is not valid."}, status=403)
     return _answer(answer)
@@ -96,7 +99,7 @@ def handoff_redeem(request, payload):
 def event(request, payload):
     kind = payload.get("event")
     if kind == "tunnel.closed":
-        services.tunnel_closed(payload.get("gateway_id"))
+        services.tunnel_closed(payload.get("gateway_id"), str(payload.get("tunnel") or ""))
     elif kind == "console.switched":
         services.console_switched(payload.get("gateway_id"), payload.get("enabled") is True)
     elif kind == "session.ended":

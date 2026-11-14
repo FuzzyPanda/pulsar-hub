@@ -50,6 +50,9 @@ class ConsoleSession(OrganisationScopedModel):
     role = models.CharField(max_length=16, choices=Role.choices)
     # The console origin this session is served on; its cookie means nothing anywhere else.
     origin = models.CharField(max_length=300)
+    # The hub origin the person opened it from. The hand-off to the console origin is accepted
+    # only from a page of this origin.
+    hub_origin = models.CharField(max_length=300, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     # Set when the gateway has accepted the session. Until then nothing can be relayed.
