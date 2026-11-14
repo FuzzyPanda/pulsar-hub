@@ -86,7 +86,7 @@ sentence. A caller must treat a code it does not know as it treats the status al
 |---|---|---|---|
 | 401 | `not_authenticated` | No bearer credential was sent | Send one |
 | 401 | `token_not_accepted` | The credential is unknown, revoked, or its site or organisation is closed | Stop calling; a person must issue a new one |
-| 403 | `missing_scope` | The service token is accepted but lacks the scope this call needs | Keep using its other scopes. A token's scopes are fixed when it is made, so a person creates a new token that has this one |
+| 403 | `missing_scope` | The service token is accepted but lacks the scope this call needs | That call keeps being refused until a person creates a new token that has the scope (a token's scopes are fixed when it is made). The token's other scopes still work, so a caller may carry on with the calls it can make, or stop and ask for a person: Pulsar Rostering stops for `directory:write` and `events:read`, which it cannot work without, and carries on without `directory:read` |
 | 403 | `directory_source_is_hub` | `PUT /directory` for an organisation whose people and sites are managed in the hub | A person switches the directory source in the hub console |
 | 403 | `role_too_low` | A user token whose role is below what the call needs | Nothing; hide the feature |
 | 403 | `pairing_code_not_valid` | `POST /gateways/pair` refused, whatever the cause | A person makes a new code |
@@ -300,7 +300,7 @@ row is applied. A sender must read `rejected`: a `200` no longer means every row
 | `status: ended` for a person the hub holds, anything else about the row invalid | **The person is ended.** The row is also listed in `rejected`, and the person's other details are left as they were |
 | `is_active: false` for a site the hub holds, anything else invalid | **The site is made inactive.** Listed in `rejected`; its other details are left as they were |
 | Invalid, and not such a removal (`invalid_row`: no name once cleaned, an unknown time zone, a status that is neither `active` nor `ended`, a reference that is not a UUID) | Not applied. A person or site the hub already holds under that reference is left exactly as it was: it is **not** ended or made inactive for being "missing" |
-| The same reference on two rows (`duplicate_reference`) | Neither row is applied; what the hub holds is left as it was |
+| The same reference on two rows (`duplicate_reference`) | Neither row is applied; what the hub holds is left as it was. Each of the rows is listed |
 | A new reference that is already in use (`reference_in_use`: another organisation holds it) | Not created |
 
 A person or site left out of the list altogether is still ended or made inactive, as before.
@@ -341,7 +341,8 @@ call of any kind, to the half minute. Nothing about a door is in this answer: no
 or modes. It is read-only and tells a reader how far to trust door attendance from a site, not how
 to change anything there. `GET /api/v1/people` is the hub's copy of the people, in the shape of
 the `people` rows above; a sender can read both back to check that what it sent is what the hub
-holds.
+holds. Both answers are the whole list in one reply, not pages: at most the 20,000 people
+and 20,000 sites a snapshot may carry.
 
 `GET /api/v1/events?after=<cursor>&limit=200&type=attendance` returns events with a cursor greater
 than `after`, oldest first:

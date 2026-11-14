@@ -222,10 +222,13 @@ class _Rows:
             if ref is not None:
                 (twice if ref in seen else seen).add(ref)
         self.named = seen
-        for ref in sorted(twice, key=str):
-            self._reject(ref, "duplicate_reference", f"This {key} appears more than once in the list.")
         for row, ref in zip(rows, refs, strict=True):
-            if ref is None or ref in twice:
+            if ref is None:
+                continue
+            if ref in twice:
+                # Neither row is applied (which one is right is not the hub's to guess), and each is
+                # listed, so `rejected_count` is the number of rows not taken.
+                self._reject(ref, "duplicate_reference", f"This {key} appears more than once in the list.")
                 continue
             try:
                 if ref not in held and ref in taken:

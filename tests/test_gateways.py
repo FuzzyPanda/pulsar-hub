@@ -708,7 +708,7 @@ def test_a_reference_sent_twice_is_refused_for_both_rows_and_changes_nobody(clie
         f.PersonFactory(organisation=world_a.organisation, name="Someone Else")
     body["people"].append({"person_ref": str(uuid.uuid4()), "name": "Someone New"})
     data = put_directory(client, world_a, json.dumps(body).encode()).json()
-    assert [r for r in data["rejected"] if r["code"] == "duplicate_reference"] == [
+    assert data["rejected_count"] == 2 and data["rejected"] == 2 * [
         {
             "person_ref": str(world_a.person.pk),
             "code": "duplicate_reference",
