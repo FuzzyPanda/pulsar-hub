@@ -31,6 +31,8 @@ FACTORIES = {
     f.AccessGroup: f.AccessGroupFactory,
     f.AccessGroupMember: f.AccessGroupMemberFactory,
     f.AccessGroupSite: f.AccessGroupSiteFactory,
+    f.AccessGroupPosition: f.AccessGroupPositionFactory,
+    f.AccessGroupExclusion: f.AccessGroupExclusionFactory,
     f.PairingCode: f.PairingCodeFactory,
     f.Gateway: f.GatewayFactory,
     f.GatewayEvent: f.GatewayEventFactory,

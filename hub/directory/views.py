@@ -177,6 +177,7 @@ def person_detail(request, org_slug: str, person_id):
     context = {
         "person": person,
         "groups": in_groups,
+        "memberships": memberships,
         "other_groups": AccessGroup.objects.exclude(pk__in=[g.pk for g in in_groups]),
         "site_rows": [{"site": site, "sync": site_sync_status(site, live.get(site.pk))} for site in sites],
         "recent_events": GatewayEvent.objects.filter(person=person).select_related("site")[:25],

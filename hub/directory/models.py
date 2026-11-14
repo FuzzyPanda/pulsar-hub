@@ -63,6 +63,11 @@ class Person(OrganisationScopedModel):
     work_email = models.EmailField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
     ended_at = models.DateTimeField(null=True, blank=True)
+    # The person's current job positions ("Guard", "Supervisor"), as Pulsar Rostering last sent
+    # them: plain names, sorted, no duplicates. Not a credential and not one of rule 11's fields.
+    # An access group can name positions; holding one puts the person in that group
+    # (hub.access.services.sync_position_memberships).
+    positions = models.JSONField(default=list, blank=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )

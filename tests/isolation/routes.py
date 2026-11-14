@@ -121,10 +121,20 @@ ORG_ROUTES: dict[str, OrgRoute] = {
         data=lambda w: {"sites": []},
         step_up=True,
     ),  # fmt: skip
+    "group_positions": OrgRoute(
+        "POST",
+        Role.ADMIN,
+        kwargs=lambda w: {"group_id": w.access_group.pk},
+        data=lambda w: {"positions": [], "new_position": "Cleaner"},
+        step_up=True,
+    ),
     "group_member_add": OrgRoute(
         "POST", Role.MANAGER, kwargs=lambda w: {"group_id": w.access_group.pk}, data=lambda w: {"person": w.person.pk}
     ),
     "group_member_remove": OrgRoute(
+        "POST", Role.MANAGER, kwargs=lambda w: {"group_id": w.access_group.pk}, data=lambda w: {"person": w.person.pk}
+    ),
+    "group_member_allow": OrgRoute(
         "POST", Role.MANAGER, kwargs=lambda w: {"group_id": w.access_group.pk}, data=lambda w: {"person": w.person.pk}
     ),
     # Gateways and what they report (H3, H4).
@@ -169,6 +179,7 @@ API_ROUTES: dict[str, ApiRoute] = {
     "api_sites": ApiRoute("service", Role.MANAGER, "directory:read"),
     "api_events": ApiRoute("service", Role.MANAGER, "events:read"),
     "api_directory": ApiRoute("service", None, "directory:write", "PUT"),
+    "api_capabilities": ApiRoute("service", None, ""),  # any service token, whatever its scopes
     "api_gateway_pair": ApiRoute("public", None, method="POST"),
     "api_gateway_access": ApiRoute("gateway", None),
     "api_gateway_access_ack": ApiRoute("gateway", None, method="POST"),

@@ -109,6 +109,26 @@ land, and update `docs/CONTRACTS.md` in the same change whenever an implementati
   carries anything else (`EVENT_DATA_KEYS` in `hub/gateways/services.py`, the directory view). That
   is how rules 2 and 11 are enforced: add a key only after deciding it can never hold a credential or
   one of the fields rule 11 names.
+- **Every `/api/v1/` refusal is `{"detail", "code"}`.** Use `hub.api.exceptions.refusal(...)` in a
+  view, or put `code=` on the `ValidationError` a service raises. A new code is added to the table
+  in `docs/CONTRACTS.md`, "Refusals", in the same change, and a code is never renamed: callers
+  branch on it.
+- **A directory snapshot is judged row by row** (`apply_rostering_snapshot`). A row the hub cannot
+  take is reported in `rejected` and leaves whoever it names untouched; a removal is applied even
+  from an otherwise bad row. Only a snapshot that is the wrong shape, carries a key outside the
+  allow-list, or would leave nobody active is refused whole.
+- **A membership has a source.** `manual` rows are made by people in the console; `positions` rows
+  are made and removed only by `hub.access.services.sync_position_memberships`, from the positions
+  on each active person, the positions each group names, and who is being kept out
+  (`AccessGroupExclusion`). Never write a `positions` row anywhere else.
+- **Anything that changes who is in a group calls `lock_access()` first**, before any other row
+  lock, and runs the sync before it commits if it changed a person's positions or status, a
+  group's positions, or an exclusion. Without the lock two such changes each decide from a state
+  that lacks the other's and leave someone in a group with nothing behind it
+  (`tests/test_positions_hardening.py` holds the proofs). The sync audits each membership it adds
+  or removes; do not replace that with a count.
+- The directory allow-list and what `GET /api/v1/capabilities` advertises are one list
+  (`DIRECTORY_PERSON_FIELDS`): add a key there or nowhere.
 - **What a gateway is sent is a complete state with a version**, never a change (rule 5). Anything
   that alters who may enter a site must alter `desired_access(site)`, and nothing else may.
 - **Reaching across organisations** (`.all_organisations`, `_base_manager`, raw SQL) needs

@@ -368,6 +368,39 @@ def record_state(gateway: Gateway, payload: dict) -> None:
     gateway.save(update_fields=["state", "state_reported_at"])
 
 
+# --- what another system may read about a site's gateway ------------------------------------------
+
+NO_GATEWAY = {"status": "none", "last_contact_at": None, "access_confirmed": False}
+
+
+def gateway_summary(site: Site, gateway: Gateway | None) -> dict:
+    """The hub's view of `site`'s gateway, for a reader outside the hub (docs/CONTRACTS.md,
+    `GET /api/v1/sites`): is it in contact, is it healthy, and has it confirmed the access the hub
+    currently wants there. Deliberately nothing about a door: this tells a reader how far to trust
+    door attendance from a site, never what a door is doing."""
+    from hub.access.services import desired_access
+
+    if gateway is None or site.access_managed_elsewhere:
+        return dict(NO_GATEWAY)
+    if not gateway.is_in_contact():
+        status = "out_of_contact"
+    else:
+        reported = str(((gateway.state or {}).get("health") or {}).get("status") or "ok")
+        status = "ok" if reported == "ok" else "degraded"
+    return {
+        "status": status,
+        "last_contact_at": gateway.last_seen_at.strftime("%Y-%m-%dT%H:%M:%SZ") if gateway.last_seen_at else None,
+        "access_confirmed": gateway.applied_version == desired_access(site)["version"],
+    }
+
+
+def site_gateway_summaries(sites: list[Site]) -> dict:
+    """`gateway_summary` for each of `sites`, keyed by site id. One query for the gateways; the
+    access version is worked out only for sites that have one."""
+    live = {gateway.site_id: gateway for gateway in Gateway.objects.live()}
+    return {site.pk: gateway_summary(site, live.get(site.pk)) for site in sites}
+
+
 # --- read side for the console --------------------------------------------------------------------
 
 

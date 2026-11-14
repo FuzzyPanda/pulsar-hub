@@ -122,11 +122,20 @@ and the audit log on both sides. Contract: `CONTRACTS.md`, "Remote console".
 - [x] `Site` (`site_ref`, name, address, timezone).
 - [x] `AccessGroup` per organisation ("Managers", "Cleaners"), assigned to people. A group also names
   the sites it opens, which is what makes access multi-site.
+- [x] Job positions from Pulsar Rostering (2026-11-14, the owner's decision that door access is
+  managed in the hub or the gateway, not in Rostering): a person's positions arrive on the
+  directory snapshot, and an access group can name positions, so whoever holds one is in the group
+  for as long as they hold it. `GET /api/v1/capabilities` says what the hub accepts. Rostered
+  windows ("the card only works while rostered") are **not** built: they reach a door decision and
+  need the gateway's own review first.
 - [x] Pulsar Rostering link, per decision D3: people and sites come from Rostering where an
   organisation rosters; the hub is the source where it does not. One direction per organisation,
   never both. Rostering sends a full snapshot with a service token (`PUT /api/v1/directory`).
+  Each row is judged alone (2026-11-14): a row the hub cannot take is reported back and every
+  other row, and every removal, is applied.
 - [ ] CSV import for organisations with neither.
-- [x] Service tokens (hashed, scoped) and `/api/v1/` for other systems.
+- [x] Service tokens (hashed, scoped) and `/api/v1/` for other systems. Every refusal carries a
+  stable `code` beside its sentence (2026-11-14; the list is in `CONTRACTS.md`, "Refusals").
 
 ## H3 — Gateways and multi-site access
 
@@ -152,6 +161,8 @@ gateway yet**: it is tested against each side's own fakes and against each other
 
 - [x] Per site: door state, recent events, who is on site, gateway health. The gateway posts a
   door-state snapshot and events; the hub shows them on the site's page and the events page.
+- [x] For Pulsar Rostering (2026-11-14): `GET /api/v1/sites` says, per site, whether its gateway
+  is in contact, healthy, and has confirmed the current access. Nothing about a door.
 - [ ] Across sites: one page for every site's doors and alerts.
 - [ ] Alerts (door forced, held open, gateway out of contact) to email and to the app. The events
   arrive and are shown; nothing is sent yet.

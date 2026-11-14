@@ -11,17 +11,26 @@ class PersonSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Person
-        fields = ["person_ref", "name", "work_email", "status"]
+        fields = ["person_ref", "name", "work_email", "status", "positions"]
         read_only_fields = fields
 
 
 class SiteSerializer(serializers.ModelSerializer):
+    """A site, with the hub's view of its gateway when the view supplies one (the `gateways`
+    context: site id to `hub.gateways.services.gateway_summary`)."""
+
     site_ref = serializers.UUIDField(source="pk", read_only=True)
+    gateway = serializers.SerializerMethodField()
 
     class Meta:
         model = Site
-        fields = ["site_ref", "name", "address", "timezone", "is_active", "access_managed_elsewhere"]
+        fields = ["site_ref", "name", "address", "timezone", "is_active", "access_managed_elsewhere", "gateway"]
         read_only_fields = fields
+
+    def get_gateway(self, site) -> dict:
+        from hub.gateways.services import NO_GATEWAY
+
+        return self.context.get("gateways", {}).get(site.pk, dict(NO_GATEWAY))
 
 
 class EventSerializer(serializers.ModelSerializer):

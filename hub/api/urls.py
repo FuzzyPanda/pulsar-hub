@@ -8,6 +8,7 @@ urlpatterns = [
     path("organisation", views.OrganisationView.as_view(), name="api_organisation"),
     path("organisation/members", views.MemberListView.as_view(), name="api_members"),
     # Pulsar Rostering and other systems (a service token).
+    path("capabilities", views_machine.CapabilitiesView.as_view(), name="api_capabilities"),
     path("directory", views_machine.DirectoryView.as_view(), name="api_directory"),
     path("people", views_machine.PeopleView.as_view(), name="api_people"),
     path("sites", views_machine.SitesView.as_view(), name="api_sites"),

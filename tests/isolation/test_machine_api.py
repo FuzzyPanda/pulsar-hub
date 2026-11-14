@@ -184,23 +184,117 @@ def test_service_token_of_a_sees_and_changes_only_a(client, world_a, world_b, na
 
 
 def test_a_snapshot_cannot_claim_or_touch_bs_people_or_sites(client, world_a, world_b):
-    """A's Rostering sends ids that belong to B. Nothing of B changes, and A is told no."""
+    """A's Rostering sends ids that belong to B. Nothing of B changes, A is told only that the
+    reference is in use, and A's own rows in the same list are applied as normal."""
     use_rostering(world_a)
     client.get(reverse("api_people"), **service_headers(world_a))  # so the token's last-used time is already set
     before_a, before_b = snapshot(world_a.organisation), snapshot(world_b.organisation)
+    own = json.loads(directory_body(world_a))
+    own["people"][0] |= {"name": world_a.person.name, "work_email": world_a.person.work_email}
+    own["sites"] = [
+        {"site_ref": str(site.pk), "name": site.name, "address": site.address, "timezone": site.timezone}
+        for site in Site.all_organisations.filter(organisation=world_a.organisation)
+    ]
+    theirs_person = {"person_ref": str(world_b.person.pk), "name": "Taken", "status": "active"}
+    theirs_site = {"site_ref": str(world_b.site.pk), "name": "Taken"}
+    body = {"people": [*own["people"], theirs_person], "sites": [*own["sites"], theirs_site]}
+    response = client.put(
+        reverse("api_directory"),
+        data=json.dumps(body).encode(),
+        content_type="application/json",
+        **service_headers(world_a),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert world_b.marker not in response.content.decode()
+    assert sorted((r.get("person_ref") or r.get("site_ref"), r["code"]) for r in data["rejected"]) == sorted(
+        [(str(world_b.person.pk), "reference_in_use"), (str(world_b.site.pk), "reference_in_use")]
+    )
+    assert data["people_created"] == 0 and data["sites_created"] == 0
+    assert snapshot(world_b.organisation) == before_b
+    assert snapshot(world_a.organisation) == before_a  # A's own rows were unchanged, so nothing changed
+    assert Person.all_organisations.get(pk=world_b.person.pk).name == world_b.person.name
+    assert Site.all_organisations.get(pk=world_b.site.pk).organisation_id == world_b.organisation.pk
+
+    # A list made only of B's ids would leave A with nobody: refused whole, and still nothing of B's.
     for body in (
-        directory_body(world_a, people=[{"person_ref": str(world_b.person.pk), "name": "Taken", "status": "active"}]),
-        directory_body(world_a, sites=[{"site_ref": str(world_b.site.pk), "name": "Taken"}]),
+        directory_body(world_a, people=[theirs_person]),
+        directory_body(world_a, people=[theirs_person | {"status": "ended"}]),
     ):
         response = client.put(
             reverse("api_directory"), data=body, content_type="application/json", **service_headers(world_a)
         )
-        assert response.status_code == 400
-        assert world_b.marker not in response.content.decode()
+        assert response.status_code == 409 and world_b.marker not in response.content.decode()
+    # ...and saying "ended" or "inactive" about B's rows removes nothing of B's.
+    body = {
+        "people": [*own["people"], theirs_person | {"status": "ended", "name": ""}],
+        "sites": [*own["sites"], theirs_site | {"is_active": False, "name": ""}],
+    }
+    response = client.put(
+        reverse("api_directory"),
+        data=json.dumps(body).encode(),
+        content_type="application/json",
+        **service_headers(world_a),
+    )
+    assert response.status_code == 200 and response.json()["rejected_count"] == 2
     assert snapshot(world_b.organisation) == before_b
-    assert snapshot(world_a.organisation) == before_a  # the refused snapshot was applied in no part
-    assert Person.all_organisations.get(pk=world_b.person.pk).name == world_b.person.name
-    assert Site.all_organisations.get(pk=world_b.site.pk).organisation_id == world_b.organisation.pk
+    assert snapshot(world_a.organisation) == before_a
+    assert Person.all_organisations.get(pk=world_b.person.pk).status == "active"
+    assert Site.all_organisations.get(pk=world_b.site.pk).is_active
+
+
+def test_positions_sent_for_a_never_put_anyone_in_bs_groups(client, world_a, world_b):
+    """Both organisations name the same position on a group. A's snapshot gives A's person that
+    position: A's group takes them in; B's memberships, and what B's gateway is sent, do not move."""
+    from hub.access.models import AccessGroupMember, AccessGroupPosition
+    from tests import factories as f
+
+    use_rostering(world_a)
+    for world in (world_a, world_b):
+        with organisation_context(world.organisation):
+            group = f.AccessGroupFactory(organisation=world.organisation, name=f"{world.marker} Guards")
+            f.AccessGroupSiteFactory(organisation=world.organisation, access_group=group, site=world.site)
+            AccessGroupPosition.objects.create(access_group=group, position="Guard", position_key="guard")
+    before_b = snapshot(world_b.organisation)
+    version_b = client.get(
+        reverse("api_gateway_access", kwargs={"site_ref": world_b.site.pk}), **gateway_headers(world_b)
+    ).json()["version"]
+    body = json.loads(directory_body(world_a))
+    body["people"][0]["positions"] = ["Guard"]
+    body["sites"] = [
+        {"site_ref": str(site.pk), "name": site.name, "address": site.address, "timezone": site.timezone}
+        for site in Site.all_organisations.filter(organisation=world_a.organisation)
+    ]
+    response = client.put(
+        reverse("api_directory"),
+        data=json.dumps(body).encode(),
+        content_type="application/json",
+        **service_headers(world_a),
+    )
+    assert response.status_code == 200 and world_b.marker not in response.content.decode()
+    derived = AccessGroupMember.all_organisations.filter(source="positions")
+    assert [m.organisation_id for m in derived] == [world_a.organisation.pk]
+    assert snapshot(world_b.organisation) == before_b
+    after_b = client.get(
+        reverse("api_gateway_access", kwargs={"site_ref": world_b.site.pk}), **gateway_headers(world_b)
+    ).json()
+    assert after_b["version"] == version_b and world_a.marker not in json.dumps(after_b)
+    assert current_organisation() is None
+
+
+def test_sites_show_a_only_as_gateways(client, world_a, world_b):
+    """The gateway block on `GET /sites` is worked out per organisation: B's gateway, its contact
+    time and its confirmation never colour A's answer."""
+    with organisation_context(world_b.organisation):
+        Gateway.objects.update(revoked_at=timezone.now())
+    rows = {row["site_ref"]: row for row in client.get(reverse("api_sites"), **service_headers(world_a)).json()}
+    assert set(rows) == {
+        str(pk) for pk in Site.all_organisations.filter(organisation=world_a.organisation).values_list("pk", flat=True)
+    }
+    assert rows[str(world_a.site.pk)]["gateway"]["status"] == "ok"
+    theirs = {row["site_ref"]: row for row in client.get(reverse("api_sites"), **service_headers(world_b)).json()}
+    assert theirs[str(world_b.site.pk)]["gateway"]["status"] == "none"
+    assert str(world_a.site.pk) not in theirs and current_organisation() is None
 
 
 def test_the_organisation_cannot_be_named_by_a_service_caller(client, world_a, world_b):
@@ -228,7 +322,8 @@ def test_service_tokens_need_the_scope_and_die_when_revoked(client, world_a, nam
     with organisation_context(world_a.organisation):
         others = [s for s in ("directory:read", "directory:write", "events:read") if s != API_ROUTES[name].scope]
         ServiceToken.objects.update(scopes=others)
-    assert call().status_code == 403
+    # A call that needs no scope (what the hub accepts) answers any live token.
+    assert call().status_code == (403 if API_ROUTES[name].scope else 200)
     with organisation_context(world_a.organisation):
         ServiceToken.objects.update(scopes=[API_ROUTES[name].scope], revoked_at=timezone.now())
     assert call().status_code == 401

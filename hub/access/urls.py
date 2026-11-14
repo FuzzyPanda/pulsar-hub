@@ -8,6 +8,8 @@ org_patterns = [
     org_path("access-groups/<uuid:group_id>/update/", views.group_update, name="group_update"),
     org_path("access-groups/<uuid:group_id>/delete/", views.group_delete, name="group_delete"),
     org_path("access-groups/<uuid:group_id>/sites/", views.group_sites, name="group_sites"),
+    org_path("access-groups/<uuid:group_id>/positions/", views.group_positions, name="group_positions"),
     org_path("access-groups/<uuid:group_id>/members/add/", views.group_member_add, name="group_member_add"),
     org_path("access-groups/<uuid:group_id>/members/remove/", views.group_member_remove, name="group_member_remove"),
+    org_path("access-groups/<uuid:group_id>/members/allow/", views.group_member_allow, name="group_member_allow"),
 ]

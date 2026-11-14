@@ -15,14 +15,14 @@
         <tbody>
           {% for member in members %}
             <tr>
-              <td><a href="{% url 'person_detail' org_slug=organisation.slug person_id=member.person.id %}">{{ member.person.name }}</a></td>
+              <td><a href="{% url 'person_detail' org_slug=organisation.slug person_id=member.person.id %}">{{ member.person.name }}</a>{% if member.source == "positions" %} <span class="badge">Through a position</span>{% endif %}</td>
               <td><span class="badge{% if member.person.status == 'active' %} badge-ok{% endif %}">{{ member.person.get_status_display }}</span></td>
               {% if can_assign %}
                 <td>
                   <form method="post" action="{% url 'group_member_remove' org_slug=organisation.slug group_id=group.id %}">
                     {% csrf_token %}
                     <input type="hidden" name="person" value="{{ member.person.id }}">
-                    <button class="btn btn-secondary btn-sm" type="submit">Remove<span class="visually-hidden"> {{ member.person.name }}</span></button>
+                    <button class="btn btn-secondary btn-sm" type="submit">{% if member.source == "positions" %}Remove and keep out{% else %}Remove{% endif %}<span class="visually-hidden"> {{ member.person.name }}</span></button>
                   </form>
                 </td>
               {% endif %}
@@ -33,6 +33,24 @@
         </tbody>
       </table>
     </div>
+    {% if kept_out %}
+      <h3>Kept out</h3>
+      <p class="muted">These people hold a position that would put them in this group, and someone removed them. Their position does nothing here until they are allowed again.</p>
+      <ul class="list">
+        {% for row in kept_out %}
+          <li>
+            <a href="{% url 'person_detail' org_slug=organisation.slug person_id=row.person.id %}">{{ row.person.name }}</a>
+            {% if can_assign %}
+              <form method="post" action="{% url 'group_member_allow' org_slug=organisation.slug group_id=group.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="person" value="{{ row.person.id }}">
+                <button class="btn btn-secondary btn-sm" type="submit">Allow again<span class="visually-hidden"> {{ row.person.name }}</span></button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
     {% if can_assign %}
       <h3>Add a person</h3>
       {% if candidates %}
@@ -49,6 +67,40 @@
       {% else %}
         <p class="muted">Every active person is already in this group.</p>
       {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="positions-heading">
+    <h2 id="positions-heading">Job positions</h2>
+    <p class="muted">Everyone who holds one of these positions is in this group for as long as they hold it. Positions come from Pulsar Rostering with each person. People added by hand above are not affected, and a person removed above is kept out whatever their position.</p>
+    {% if can_edit %}
+      <form method="post" action="{% url 'group_positions' org_slug=organisation.slug group_id=group.id %}">
+        {% csrf_token %}
+        <fieldset>
+          <legend class="visually-hidden">Positions that put a person in this group</legend>
+          {% for row in position_rows %}
+            <div class="check">
+              <input id="position-{{ forloop.counter }}" type="checkbox" name="positions" value="{{ row.name }}"{% if row.included %} checked{% endif %}>
+              <label for="position-{{ forloop.counter }}">{{ row.name }}</label>
+            </div>
+          {% empty %}
+            <p class="empty">No one has a position yet. They arrive once Pulsar Rostering sends them.</p>
+          {% endfor %}
+        </fieldset>
+        <div class="field">
+          <label for="new-position">Another position</label>
+          <input id="new-position" type="text" name="new_position" maxlength="60" autocomplete="off">
+          <p class="hint">Exactly as it is named in Pulsar Rostering; capitals do not matter.</p>
+        </div>
+        <p class="hint">Saving asks for two-step sign-in, because it can open doors.</p>
+        <div class="actions"><button class="btn" type="submit">Save positions</button></div>
+      </form>
+    {% else %}
+      <ul class="list">
+        {% for row in position_rows %}{% if row.included %}<li>{{ row.name }}</li>{% endif %}{% empty %}
+          <li class="empty">No positions.</li>
+        {% endfor %}
+      </ul>
     {% endif %}
   </section>
 
