@@ -21,6 +21,14 @@ x-hardened: &hardened
   read_only: true
   tmpfs: ["/tmp"]
 
+# Every service logs to a file Docker rotates. Without this the default json-file log grows
+# without limit, and one noisy peer (a gateway, a browser, a scanner) can fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 # Two database roles. The owner (POSTGRES_USER) creates the schema; only the web container's
 # entrypoint uses it, for migrations, and removes it from the environment before the service
 # starts. The service itself runs as POSTGRES_APP_USER, which cannot change the schema and can only
@@ -44,6 +52,7 @@ volumes:
 services:
   db:
     image: postgres:16-alpine
+    logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
@@ -60,6 +69,7 @@ services:
 
   web:
     <<: *hardened
+    logging: *logging
     image: pulsar-hub:local              # named so `worker` reuses the same image
     build:
       context: .
@@ -83,6 +93,7 @@ services:
 
   worker:
     <<: *hardened
+    logging: *logging
     image: pulsar-hub:local              # same image as web, different role
     command: ["worker"]
     env_file: [.env]
@@ -97,6 +108,7 @@ services:
 
   relay:
     <<: *hardened
+    logging: *logging
     image: pulsar-hub:local              # same image, third role
     command: ["relay"]
     # Deliberately no env_file: only what the relay needs, named one by one.
@@ -124,6 +136,7 @@ services:
 
   caddy:
     image: caddy:2.8-alpine
+    logging: *logging
     # no-new-privileges only: caddy runs as root in its image and binds 80/443.
     security_opt: ["no-new-privileges:true"]
     depends_on:
